@@ -132,8 +132,11 @@ chapter text for helper syntax. render runs after index, so dispatch sees
 the final logical chapter arrangement while the original source_path is
 still available. It replaces eligible chapter content before helper
 expansion; escaped generated values and source text therefore cannot be
-mistaken for raw mdBook helper directives. rewrite-links runs after links,
-so ordinary Markdown links introduced by includes are covered too.
+mistaken for raw mdBook helper directives. The HTML renderer must entity-escape
+helper-token delimiters in generated text and attributes as well as applying
+ordinary HTML escaping; browser-visible text remains exact while mdBook's
+helper scanner cannot recognize it. rewrite-links runs after links, so
+ordinary Markdown links introduced by includes are covered too.
 
 Both commands implement the standard external-preprocessor protocol. They
 read the complete Book JSON and preprocessor context from stdin, write one
@@ -340,7 +343,9 @@ A collapsed Original source section contains the exact original UTF-8 text,
 unchanged, in a format-labelled code block. It supports copy/paste,
 syntax-oriented review, and comparison when the structured view is not the
 right representation. It is excluded from expand/collapse-all. Every value
-inserted into HTML is escaped; source content is never interpreted as markup.
+inserted into HTML is escaped, including helper-token delimiters such as
+double opening braces; source content is never interpreted as markup. The
+browser still displays the original characters.
 
 The supplied CSS and JavaScript expose a small semantic hook vocabulary for
 the document root, node kinds, scalar types, and containers. Those hooks are
@@ -443,7 +448,9 @@ applied, and the original source is unchanged. The probe uses only the
 documented semantic hooks; wrapper nesting, whitespace between tags, attribute
 order, and ordinary CSS classes remain free to change. Expected observations
 are written independently of renderer internals, so the probe cannot merely
-reproduce the renderer's output.
+reproduce the renderer's output. One positive fixture contains literal mdBook
+helper-looking text in both a scalar and the original source; the observed
+browser text must retain it without invoking a helper.
 
 JavaScript is tested at the behavior seam. One browser-level smoke suite,
 following mdBook's selector-oriented browser tests, loads a built fixture and
@@ -461,8 +468,9 @@ rewriting is tested against the Markdown AST and spans, including reference
 definitions. One small mdBook build fixture verifies the actual ordering with
 index, links, includes, and the stock HTML renderer. That fixture is inspected
 through parsed output paths, DOM links, and semantic probes, not expected HTML
-files. A single end-to-end fixture proves wiring; it does not duplicate every
-core or renderer case.
+files. The fixture includes a literal helper-looking value to verify the
+render-before-links protection. A single end-to-end fixture proves wiring; it
+does not duplicate every core or renderer case.
 
 Only high-value failure tests are required. They cover a malformed registered
 source with location-bearing diagnostics, one representative of each security
