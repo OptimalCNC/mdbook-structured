@@ -1,0 +1,7 @@
+[book]
+title = "mdbook-structured"
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
