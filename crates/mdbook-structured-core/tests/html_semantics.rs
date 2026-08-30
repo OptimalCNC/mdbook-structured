@@ -55,6 +55,14 @@ fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
             ),
         ),
         (
+            "reversed actions",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<button data-structured-action=\"expand-all\">Expand all</button><button data-structured-action=\"collapse-all\">Collapse all</button>",
+                "<button data-structured-action=\"collapse-all\">Collapse all</button><button data-structured-action=\"expand-all\">Expand all</button>",
+            ),
+        ),
+        (
             "non-details container",
             mutate_once(
                 VALID_PROBE_HTML,
@@ -79,6 +87,18 @@ fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
                 "<div><details data-structured-original-source>",
             )
             .replacen("</details></section>", "</details></div></section>", 1),
+        ),
+        (
+            "wrapped original source pre",
+            mutate_once(
+                &mutate_once(
+                    VALID_PROBE_HTML,
+                    "<pre><code data-structured-format=\"json\">",
+                    "<div><pre><code data-structured-format=\"json\">",
+                ),
+                "</code></pre></details>",
+                "</code></pre></div></details>",
+            ),
         ),
         (
             "original source before root",

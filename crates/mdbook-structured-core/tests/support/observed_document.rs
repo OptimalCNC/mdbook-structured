@@ -92,6 +92,16 @@ pub(crate) fn observe_raw_html(rendered: &str) -> ObservedDocument {
             .all(|element| element.value().name() == "button"),
         "actions must be direct buttons after the heading"
     );
+    assert_eq!(
+        required_attribute(action_elements[0], "data-structured-action"),
+        "expand-all",
+        "expand-all action must precede collapse-all"
+    );
+    assert_eq!(
+        required_attribute(action_elements[1], "data-structured-action"),
+        "collapse-all",
+        "collapse-all action must follow expand-all"
+    );
     let actions = action_elements
         .iter()
         .copied()
@@ -126,23 +136,32 @@ pub(crate) fn observe_raw_html(rendered: &str) -> ObservedDocument {
     audit_model_node_ownership(structured_root, model_root);
     audit_empty_markers(structured_root);
 
+    let original_children = direct_element_children(original).collect::<Vec<_>>();
+    assert_eq!(
+        original_children.len(),
+        2,
+        "original source must have only direct summary and pre children"
+    );
     let summary = required_direct_summary(original, "original source");
-    let codes = select_element(original, "code[data-structured-format]");
+    let pre = original_children[1];
     assert_eq!(
-        codes.len(),
-        1,
-        "expected exactly one format-labelled source"
-    );
-    let code = codes[0];
-    let parent = code
-        .parent()
-        .and_then(ElementRef::wrap)
-        .expect("source code must have an element parent");
-    assert_eq!(
-        parent.value().name(),
+        pre.value().name(),
         "pre",
-        "source code must be a child of pre"
+        "original source pre must directly follow its summary"
     );
+    let code_children = direct_element_children(pre).collect::<Vec<_>>();
+    assert_eq!(
+        code_children.len(),
+        1,
+        "original source pre must have exactly one direct code child"
+    );
+    let code = code_children[0];
+    assert_eq!(
+        code.value().name(),
+        "code",
+        "original source pre child must be code"
+    );
+    required_attribute(code, "data-structured-format");
 
     ObservedDocument {
         heading: element_text(heading),
