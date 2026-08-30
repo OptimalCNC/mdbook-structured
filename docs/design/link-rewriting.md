@@ -1,10 +1,15 @@
 # Chapter Link Rewriting
 
-`rewrite-links` builds a map from the source paths and logical chapter paths
-in the received `Book` to the outputs established by
-[route projection](routes.md). It resolves a relative Markdown destination
-from the current chapter using mdBook's path conventions, then rewrites it
-only when the normalized destination identifies a registered chapter.
+`rewrite-links` builds exact chapter lookups and convenience-alias candidate
+sets from the source paths and logical chapter paths in the received `Book`.
+Every chapter source path is exact. Independently authored logical paths are
+also exact, while paths synthesized from a README source by mdBook's `index`
+phase are convenience aliases. Both kinds of lookup resolve to the outputs
+established by [route projection](routes.md).
+
+The rewriter resolves a relative Markdown destination from the current chapter
+using mdBook's path conventions, then consults the exact lookup before any
+convenience aliases.
 
 For example:
 
@@ -19,12 +24,21 @@ from the current chapter in the same manner as mdBook.
 
 For a structured source whose file stem is `README`, the map also registers
 mdBook's post-index `index.md` path and its parent-directory form as aliases
-for the projected `index.<source-extension>.html` page. These aliases preserve
-authored `README.yaml`, `index.md`, and directory-style links even though
-`render` has already replaced `Chapter.path` with the shimmed path.
+for the projected `index.<source-extension>.html` page. The source path itself,
+such as `README.yaml`, remains an exact chapter lookup even though `render` has
+already replaced `Chapter.path` with the shimmed path.
 
-An actual registered chapter at an alias path takes precedence; README aliases
-are added only when they are otherwise unclaimed.
+An actual registered chapter at a destination takes precedence over a
+convenience alias. Otherwise, an alias with one candidate is rewritten, while
+an alias with multiple candidates fails with a diagnostic naming each source
+and projected output. Candidate sets retain every README target: the tool does
+not reject otherwise valid chapters or choose one by `SUMMARY.md` order.
+
+For example, direct links to `README.yaml` and `README.json` in the same
+directory resolve to `index.yaml.html` and `index.json.html`. A link to their
+shared `index.md` or directory-style alias is ambiguous, in the absence of an
+exact chapter at that destination, and fails only when that link appears in
+authored Markdown.
 
 ## Rewriting rules
 
@@ -49,7 +63,7 @@ The following are left unchanged:
 - raw HTML links, code blocks, and ordinary scalar text;
 - external, protocol-relative, and other non-local URI schemes;
 - fragment-only links;
-- destinations that do not identify a registered chapter; and
+- destinations with neither an exact chapter nor an alias candidate; and
 - destinations that already end in `.html`.
 
 Reference-style links are supported by rewriting their definition once. An

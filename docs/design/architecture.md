@@ -38,9 +38,9 @@ The pipeline delegates through focused contracts:
 - the [structured core](structured-core.md) parses source text and exposes the
   parser-neutral document model;
 - [route projection](routes.md) assigns deterministic structured chapter
-  paths and rejects collisions before mutation;
-- [chapter-link rewriting](link-rewriting.md) resolves authored destinations
-  against the projected chapter map; and
+  paths and rejects duplicate final chapter routes before mutation;
+- [chapter-link rewriting](link-rewriting.md) resolves or diagnoses authored
+  destinations against the projected chapter map; and
 - [HTML presentation](html-presentation.md) defines the raw-HTML framing,
   semantic markup, styling hooks, and progressive behavior.
 

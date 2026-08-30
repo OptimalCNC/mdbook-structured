@@ -11,6 +11,7 @@ source_path                 post-index path        structured path           HTM
 config/runtime.yaml         config/runtime.yaml    config/runtime.yaml.md    config/runtime.yaml.html
 schemas/manifest.json       schemas/manifest.json  schemas/manifest.json.md  schemas/manifest.json.html
 README.yaml                 index.md               index.yaml.md             index.yaml.html
+README.json                 index.md               index.json.md             index.json.html
 ```
 
 The final `.md` is an integration shim for the stock renderer's
@@ -22,6 +23,13 @@ The real source remains in `Chapter.source_path`, so edit links and diagnostics
 continue to point to `config/runtime.yaml` or `schemas/manifest.json`. An
 ordinary `settings.md` chapter and a structured `settings.yaml` chapter
 therefore produce `settings.html` and `settings.yaml.html`.
+
+Likewise, `README.yaml` and `README.json` in one directory produce distinct
+final routes even though mdBook's `index` phase gives them the same interim
+`index.md` path. Their shared index and directory-style link aliases may be
+ambiguous, but alias ambiguity is diagnosed only when such a link is authored;
+it is not an output-route collision. Direct links to the two source paths
+remain distinct.
 
 ## Preflight
 

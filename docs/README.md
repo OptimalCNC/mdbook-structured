@@ -19,7 +19,7 @@ source tree to discover unlisted chapters.
 
 V1 includes:
 
-- JSON and YAML parsing through established parser libraries;
+- JSON and YAML parsing through selected parser libraries;
 - a parser-neutral `StructuredDocument` model with source provenance;
 - build-time semantic HTML rendering and progressive JavaScript enhancement;
 - book-wide Markdown link rewriting for registered structured chapters;

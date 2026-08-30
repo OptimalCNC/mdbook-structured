@@ -43,7 +43,9 @@ and column locations are one-based, with columns counted in Unicode scalar
 values rather than bytes or display cells. Every span and source location
 refers to `loaded_source`: the UTF-8 text supplied in `Chapter.content` after
 mdBook's loading and BOM handling. Adapters normalize parser-native
-coordinates at this boundary.
+coordinates at this boundary. A span records parser-reported provenance; it
+does not promise that its source slice includes every syntactic delimiter.
+`loaded_source` remains the authority for the exact source text.
 
 Sequence positions are represented by their ordered position, and mapping
 entries retain insertion order. Decoded keys are unique strings. Numbers
@@ -68,17 +70,26 @@ trait FormatAdapter {
 }
 ```
 
-The initial adapters use established Rust parser libraries that expose the
-ordering and source provenance required by the public model. The JSON adapter
-uses `json-syntax` 0.12.x. The YAML adapter delegates accepted syntax and
-scalar interpretation to its selected parser library; v1 does not define a
-separate YAML schema or an exhaustive YAML rejection matrix.
+The initial adapters use Rust parser libraries that expose the ordering and
+source provenance required by the public model. The JSON adapter uses
+`json-syntax` 0.12.x. The YAML adapter uses `rlsp-yaml-parser` with an exact
+`=0.11.1` version requirement. Parser-library types remain private to their
+adapters.
 
-The selected YAML library must expose the typed scalar meaning and provenance
-needed for a lossless projection. An event-only parser that leaves scalar
-interpretation to its caller is insufficient by itself because it would force
-the adapter to define scalar semantics instead of inheriting them.
-Parser-library types remain private to their adapters.
+The YAML adapter first consumes the library's event stream as a bounded
+preflight, then uses its lossless loader with the library's default Core schema
+to build the parsed tree. The library therefore owns YAML grammar, scalar
+decoding, tree construction, and scalar meaning. The adapter owns resource
+preflight, ordered projection into `StructuredDocument`, and conversion of
+parser errors and provenance. When projecting an implicitly resolved number,
+it retains the parser-returned plain-scalar spelling rather than converting it
+through a Rust numeric type. V1 does not define a separate YAML schema or an
+exhaustive YAML acceptance and rejection matrix.
+
+`rlsp-yaml-parser` is a young, pre-1.0 dependency, so the exact pin is part of
+the v1 design. A version change must requalify the adapter through the public
+core contract tests. Keeping the dependency behind `FormatAdapter` allows it
+to be replaced without changing `StructuredDocument` or its callers.
 
 After parsing succeeds, an adapter must project the parser result losslessly
 into `StructuredDocument`. Duplicate decoded mapping keys are rejected so the
@@ -99,9 +110,13 @@ max-nodes = 10000
 max-depth = 64
 ```
 
-Limits cause a diagnostic before unbounded expansion or output generation. A
-diagnostic identifies the source name, category, line and column when
-available, and the structured key path when the parser can establish one.
+The input-byte limit is checked before parser entry. The YAML event preflight
+counts nodes and open containers, so configured node and depth limits stop the
+input before the loader builds its tree or rendering begins. Parser-owned hard
+safety limits may reject an input earlier. Limits cause a diagnostic before
+unbounded expansion or output generation. A diagnostic identifies the source
+name, category, line and column when available, and the structured key path
+when the adapter can establish one.
 
 The [verification strategy](verification.md#structured-core) treats this
 public interface—not parser-specific representations—as the test surface.

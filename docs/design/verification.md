@@ -20,6 +20,8 @@ Table-driven positive fixtures cover representative JSON and YAML documents
 accepted by the selected parser libraries: mappings and sequences, nesting,
 insertion order, decoded keys and strings, empty values, booleans versus
 strings, lexical numbers, source spans, and exact `loaded_source` retention.
+YAML scalar-kind expectations come from `rlsp-yaml-parser` 0.11.1's Core
+schema rather than a project-owned classification table.
 
 A property-based generator produces bounded JSON-compatible trees and
 serializes them into valid JSON. YAML positive coverage uses small curated
@@ -32,7 +34,8 @@ with multibyte UTF-8 before a span.
 For JSON, an independent semantic projection through `serde_json::Value` may
 corroborate basic value meaning; it does not replace span or lexical-form
 assertions. Parser-library conformance suites remain the authority for general
-grammar coverage.
+grammar coverage. A change to the exact YAML parser pin must pass the same
+public core contract tests before adoption.
 
 ## HTML and JavaScript
 
@@ -75,16 +78,22 @@ assert typed protocol results: only eligible chapters change, `source_path` is
 preserved, structured logical paths gain the source-extension shim, unrelated
 chapters and metadata are untouched, projected chapter-route collisions and
 exact static-source conflicts are reported, and rewritten destinations follow
-the chapter map. Link rewriting is tested against the Markdown AST and spans,
-including reference definitions. Capability tests exercise
-`render supports html` and `rewrite-links supports html`.
+the chapter map. Two structured README chapters with different source
+extensions but the same post-index logical path must project to distinct
+outputs. Direct source links to both must rewrite independently, and unused
+shared convenience aliases must not fail preprocessing. A separate case adds
+an actual `index.md` chapter at a shared alias destination and verifies that
+the exact chapter wins without ambiguity. Link rewriting is tested against the
+Markdown AST and spans, including reference definitions. Capability tests
+exercise `render supports html` and `rewrite-links supports html`.
 
 One small mdBook build fixture verifies the actual ordering with `index`,
 `links`, includes, and the stock HTML renderer. It is inspected through parsed
 output paths, DOM links, and semantic probes rather than expected HTML files.
-It verifies `runtime.yaml.html` and `index.yaml.html` routes, rewritten
-source-path and README/index/directory aliases, and stock publication of the
-raw `runtime.yaml` file. The fixture includes a literal helper-looking value to
+It verifies `runtime.yaml.html` plus distinct `index.yaml.html` and
+`index.json.html` routes, direct source-path links to both README pages, a
+unique README/index/directory alias, and stock publication of the raw
+`runtime.yaml` file. The fixture includes a literal helper-looking value to
 verify render-before-links protection. A single end-to-end fixture proves
 wiring; it does not duplicate every core or renderer case.
 
@@ -96,7 +105,9 @@ location-bearing diagnostics, duplicate decoded keys, a parsed construct that
 cannot be projected losslessly, each resource-limit boundary, an exact
 projected-route collision, an exact static-source conflict, and a projected
 route or rewritten destination that stock mdBook would corrupt because it
-contains a literal `.md`.
+contains a literal `.md`. It also covers an authored convenience alias with
+multiple chapter candidates, which must fail without rejecting the same book
+when that alias is unused.
 
 These tests do not duplicate every malformed syntax variant already covered
 by parser libraries or define an independent YAML behavior matrix. Assertions

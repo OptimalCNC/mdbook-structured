@@ -38,6 +38,13 @@ The separate [chapter-link rewriter](link-rewriting.md) maps that destination
 to the generated HTML page. Relative paths, README/index handling, query
 strings, and fragments otherwise follow mdBook's path conventions.
 
+Extension-qualified README links remain distinct. If both `README.yaml` and
+`README.json` are listed from one directory, authors can link to either source
+name and reach its corresponding page. Their shared `index.md` and
+directory-style convenience aliases are ambiguous when no actual chapter owns
+the destination, however, so an authored link using either alias stops the
+build instead of selecting a target by `SUMMARY.md` order.
+
 Authors register the two preprocessor phases and the generated assets in
 `book.toml`. The installer prints the required entries but never inserts them.
 Asset registration remains an author decision. The complete configuration and
