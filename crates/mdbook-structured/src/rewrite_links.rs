@@ -7,8 +7,8 @@ use mdbook_markdown::{MarkdownOptions, new_cmark_parser};
 
 use crate::destination::{AuthoredDestination, LocalDestination};
 use crate::{
-    AppDiagnostic, AppDiagnosticKind, ChapterTarget, LinkResolution, LinkRouteMap,
-    LogicalChapterPath,
+    AliasCandidateFact, AppDiagnostic, AppDiagnosticKind, ChapterTarget, LinkResolution,
+    LinkRouteMap, LogicalChapterPath, MdBookPathHazardFact,
 };
 
 struct DestinationEdit {
@@ -71,9 +71,16 @@ pub fn rewrite_chapter_links(
                 ..
             }) => {
                 let scanned = scan_inline_destination(markdown, source_range, dest_url.as_ref())?;
-                if let Some(edit) =
-                    build_edit(current_path, scanned.range, dest_url.as_ref(), routes)?
-                {
+                let raw_destination = markdown
+                    .get(scanned.range.clone())
+                    .ok_or_else(protocol_error)?;
+                if let Some(edit) = build_edit(
+                    current_path,
+                    scanned.range,
+                    dest_url.as_ref(),
+                    raw_destination,
+                    routes,
+                )? {
                     edits.push(edit);
                 }
             }
@@ -104,7 +111,16 @@ pub fn rewrite_chapter_links(
         let definition = definitions_by_span.get(&key).ok_or_else(protocol_error)?;
         let scanned =
             scan_reference_destination(markdown, definition.span.clone(), &definition.destination)?;
-        let Some(edit) = build_edit(current_path, scanned.range, &definition.destination, routes)?
+        let raw_destination = markdown
+            .get(scanned.range.clone())
+            .ok_or_else(protocol_error)?;
+        let Some(edit) = build_edit(
+            current_path,
+            scanned.range,
+            &definition.destination,
+            raw_destination,
+            routes,
+        )?
         else {
             continue;
         };
@@ -158,6 +174,7 @@ fn build_edit(
     current_path: &LogicalChapterPath,
     range: Range<usize>,
     authored: &str,
+    raw_authored: &str,
     routes: &LinkRouteMap,
 ) -> Result<Option<DestinationEdit>, AppDiagnostic> {
     let AuthoredDestination::Local(destination) =
@@ -168,16 +185,66 @@ fn build_edit(
 
     let target = match routes.resolve(destination.lookup()) {
         LinkResolution::Exact(target) | LinkResolution::UniqueAlias(target) => target,
-        LinkResolution::Ambiguous(_) | LinkResolution::Missing => return Ok(None),
+        LinkResolution::Ambiguous(candidates) => {
+            return Err(ambiguous_alias(destination.lookup(), candidates)?);
+        }
+        LinkResolution::Missing => return Ok(None),
     };
-    let replacement = rewritten_destination(current_path, &destination, target)?;
+    let replacement = rewritten_destination(current_path, &destination, raw_authored, target)?;
+    if replacement == authored {
+        return Ok(None);
+    }
+    if replacement.contains(".md") {
+        return Err(AppDiagnostic::from_kind(
+            AppDiagnosticKind::MdBookPathHazard {
+                fact: MdBookPathHazardFact::RewrittenDestination(replacement),
+            },
+            "a rewritten Markdown destination contains literal .md".to_owned(),
+        ));
+    }
 
-    Ok((replacement != authored).then_some(DestinationEdit { range, replacement }))
+    Ok(Some(DestinationEdit { range, replacement }))
+}
+
+fn ambiguous_alias(
+    authored_path: &LogicalChapterPath,
+    candidates: &[ChapterTarget],
+) -> Result<AppDiagnostic, AppDiagnostic> {
+    let mut facts = candidates
+        .iter()
+        .map(|candidate| {
+            let source_path = candidate
+                .source_path()
+                .cloned()
+                .ok_or_else(protocol_error)?;
+            Ok(AliasCandidateFact::new(
+                source_path,
+                candidate.output_route().clone(),
+            ))
+        })
+        .collect::<Result<Vec<_>, AppDiagnostic>>()?;
+    if facts.len() < 2 {
+        return Err(protocol_error());
+    }
+
+    let additional = facts.split_off(2);
+    let second = facts.pop().ok_or_else(protocol_error)?;
+    let first = facts.pop().ok_or_else(protocol_error)?;
+    Ok(AppDiagnostic::from_kind(
+        AppDiagnosticKind::AmbiguousAlias {
+            authored_path: authored_path.clone(),
+            first,
+            second,
+            additional,
+        },
+        "an authored Markdown destination matches multiple README aliases".to_owned(),
+    ))
 }
 
 fn rewritten_destination(
     current_path: &LogicalChapterPath,
     destination: &LocalDestination<'_>,
+    raw_authored: &str,
     target: &ChapterTarget,
 ) -> Result<String, AppDiagnostic> {
     let current_parent = current_path
@@ -193,13 +260,30 @@ fn rewritten_destination(
         output_path,
         &relative,
     )?;
-    if let Some(query) = destination.raw_query() {
+    let (_, raw_query, raw_fragment) = split_raw_destination(raw_authored);
+    if raw_query.is_some() != destination.raw_query().is_some()
+        || raw_fragment.is_some() != destination.raw_fragment().is_some()
+    {
+        return Err(protocol_error());
+    }
+    if let Some(query) = raw_query {
         rewritten.push_str(query);
     }
-    if let Some(fragment) = destination.raw_fragment() {
+    if let Some(fragment) = raw_fragment {
         rewritten.push_str(fragment);
     }
     Ok(rewritten)
+}
+
+fn split_raw_destination(authored: &str) -> (&str, Option<&str>, Option<&str>) {
+    let fragment_start = authored.find('#').unwrap_or(authored.len());
+    let before_fragment = &authored[..fragment_start];
+    let query_start = before_fragment.find('?').unwrap_or(before_fragment.len());
+    (
+        &before_fragment[..query_start],
+        (query_start < before_fragment.len()).then_some(&authored[query_start..fragment_start]),
+        (fragment_start < authored.len()).then_some(&authored[fragment_start..]),
+    )
 }
 
 fn relative_path(from: &Path, to: &Path) -> String {
@@ -336,13 +420,13 @@ fn scan_inline_destination(
 fn scan_inline_suffix(source: &str, opening: usize) -> Option<ScannedDestination> {
     let bytes = source.as_bytes();
     let mut cursor = opening + 1;
-    scan_whitespace(bytes, &mut cursor);
+    scan_link_separator(bytes, &mut cursor);
     let (range, angle_wrapped) = scan_destination(bytes, &mut cursor)?;
 
-    scan_whitespace(bytes, &mut cursor);
+    scan_link_separator(bytes, &mut cursor);
     if matches!(bytes.get(cursor), Some(b'\'' | b'"' | b'(')) {
         cursor = scan_title(bytes, cursor)?;
-        scan_whitespace(bytes, &mut cursor);
+        scan_link_separator(bytes, &mut cursor);
     }
     (bytes.get(cursor) == Some(&b')') && cursor + 1 == bytes.len()).then_some(ScannedDestination {
         range,
@@ -366,17 +450,17 @@ fn scan_reference_destination(
             continue;
         }
         let mut cursor = colon + 1;
-        scan_whitespace(bytes, &mut cursor);
+        scan_link_separator(bytes, &mut cursor);
         let Some((range, angle_wrapped)) = scan_destination(bytes, &mut cursor) else {
             continue;
         };
-        scan_whitespace(bytes, &mut cursor);
+        scan_link_separator(bytes, &mut cursor);
         if matches!(bytes.get(cursor), Some(b'\'' | b'"' | b'(')) {
             let Some(after_title) = scan_title(bytes, cursor) else {
                 continue;
             };
             cursor = after_title;
-            scan_whitespace(bytes, &mut cursor);
+            scan_link_separator(bytes, &mut cursor);
         }
         if cursor != bytes.len() {
             continue;
@@ -469,8 +553,43 @@ fn scan_title(bytes: &[u8], mut cursor: usize) -> Option<usize> {
     None
 }
 
-fn scan_whitespace(bytes: &[u8], cursor: &mut usize) {
-    while bytes.get(*cursor).is_some_and(u8::is_ascii_whitespace) {
+fn scan_link_separator(bytes: &[u8], cursor: &mut usize) {
+    while bytes
+        .get(*cursor)
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        *cursor += 1;
+    }
+    let line_break_len = match bytes.get(*cursor..) {
+        Some([b'\r', b'\n', ..]) => 2,
+        Some([b'\r' | b'\n', ..]) => 1,
+        _ => return,
+    };
+    *cursor += line_break_len;
+
+    loop {
+        while bytes
+            .get(*cursor)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            *cursor += 1;
+        }
+        if bytes.get(*cursor) != Some(&b'>') {
+            break;
+        }
+        *cursor += 1;
+        if bytes
+            .get(*cursor)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            *cursor += 1;
+        }
+    }
+
+    while bytes
+        .get(*cursor)
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
         *cursor += 1;
     }
 }

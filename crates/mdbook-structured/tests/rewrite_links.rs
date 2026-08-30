@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use mdbook_core::book::{Book, Chapter};
 use mdbook_structured::{
-    AppDiagnosticKind, LinkRouteMap, LogicalChapterPath, rewrite_chapter_links,
+    AppDiagnosticKind, LinkRouteMap, LogicalChapterPath, MdBookPathHazardFact,
+    rewrite_chapter_links,
 };
 
 fn chapter(name: &str, source_path: &str, logical_path: &str) -> Chapter {
@@ -140,6 +141,35 @@ fn inline_preserves_query_fragment_and_percent_spelling() {
 }
 
 #[test]
+fn inline_preserves_authored_entities_in_query_and_fragment_bytes() {
+    let markdown = "[entity](../config/runtime.yaml?x=&amp;#frag&amp;)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml?x=&amp;#frag&amp;",
+            "../config/runtime.yaml.html?x=&amp;#frag&amp;",
+        )],
+    );
+}
+
+#[test]
+fn inline_handles_container_prefixed_multiline_title() {
+    let markdown = "> [runtime](../config/runtime.yaml\n> \"title\")\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[("../config/runtime.yaml", "../config/runtime.yaml.html")],
+    );
+}
+
+#[test]
 fn inline_resolves_nested_relative_paths_and_direct_readme_sources() {
     let markdown = concat!(
         "[runtime](../../config/runtime.yaml) ",
@@ -213,6 +243,23 @@ fn reference_rewrites_full_collapsed_and_shortcut_definition_destinations() {
 }
 
 #[test]
+fn reference_handles_container_prefixed_title_on_the_following_line() {
+    let markdown = concat!(
+        "> [runtime link][runtime]\n>\n",
+        "> [runtime]: ../config/runtime.yaml\n",
+        ">   \"title\"\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[("../config/runtime.yaml", "../config/runtime.yaml.html")],
+    );
+}
+
+#[test]
 fn reference_shared_normal_definition_is_edited_once() {
     let markdown = concat!(
         "[first][runtime] and [second][runtime].\n\n",
@@ -268,6 +315,154 @@ fn reference_mixed_use_is_allowed_when_the_destination_would_not_change() {
     );
 
     let rewritten = rewrite_chapter_links(&path("chapter.md"), markdown, &routes()).unwrap();
+
+    assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
+}
+
+fn alias_routes(with_exact_index: bool) -> LinkRouteMap {
+    let mut chapters = vec![
+        chapter("YAML readme", "config/README.yaml", "config/index.yaml.md").into(),
+        chapter("JSON readme", "config/README.json", "config/index.json.md").into(),
+    ];
+    if with_exact_index {
+        chapters.push(chapter("Exact index", "config/index.md", "config/index.md").into());
+    }
+    LinkRouteMap::from_book(&Book::new_with_items(chapters)).unwrap()
+}
+
+#[test]
+fn failure_exact_index_target_wins_over_multiple_readme_alias_candidates() {
+    let markdown = "[index](../config/index.md)\n";
+
+    let rewritten =
+        rewrite_chapter_links(&path("guide/chapter.md"), markdown, &alias_routes(true)).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[("../config/index.md", "../config/index.html")],
+    );
+}
+
+#[test]
+fn failure_authored_ambiguous_alias_reports_every_source_and_output_pair() {
+    let markdown = "[index](../config/index.md)\n";
+
+    let error = rewrite_chapter_links(&path("guide/chapter.md"), markdown, &alias_routes(false))
+        .unwrap_err();
+
+    let AppDiagnosticKind::AmbiguousAlias {
+        authored_path,
+        first,
+        second,
+        additional,
+    } = error.kind()
+    else {
+        panic!("expected an ambiguous-alias diagnostic");
+    };
+    assert_eq!(authored_path.as_path(), Path::new("config/index.md"));
+    assert_eq!(
+        first.source_path().as_path(),
+        Path::new("config/README.yaml")
+    );
+    assert_eq!(
+        first.output_route().as_path(),
+        Path::new("config/index.yaml.html")
+    );
+    assert_eq!(
+        second.source_path().as_path(),
+        Path::new("config/README.json")
+    );
+    assert_eq!(
+        second.output_route().as_path(),
+        Path::new("config/index.json.html")
+    );
+    assert!(additional.is_empty());
+}
+
+#[test]
+fn failure_unused_ambiguous_alias_does_not_block_an_exact_source_rewrite() {
+    let markdown = "[yaml source](../config/README.yaml)\n";
+
+    let rewritten =
+        rewrite_chapter_links(&path("guide/chapter.md"), markdown, &alias_routes(false)).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[("../config/README.yaml", "../config/index.yaml.html")],
+    );
+}
+
+#[test]
+fn failure_literal_md_in_preserved_query_or_fragment_reports_complete_destination() {
+    let cases = [
+        (
+            "[query](../config/runtime.yaml?source=.md#safe)\n",
+            "../config/runtime.yaml.html?source=.md#safe",
+        ),
+        (
+            "[fragment](../config/runtime.yaml?safe=1#notes.md)\n",
+            "../config/runtime.yaml.html?safe=1#notes.md",
+        ),
+    ];
+
+    for (markdown, expected_destination) in cases {
+        let error =
+            rewrite_chapter_links(&path("guide/chapter.md"), markdown, &routes()).unwrap_err();
+
+        let AppDiagnosticKind::MdBookPathHazard {
+            fact: MdBookPathHazardFact::RewrittenDestination(destination),
+        } = error.kind()
+        else {
+            panic!("expected a rewritten-destination hazard");
+        };
+        assert_eq!(destination, expected_destination);
+    }
+}
+
+#[test]
+fn failure_literal_md_hazard_is_case_sensitive() {
+    let markdown = "[runtime](../config/runtime.yaml?source=.MD#notes.Md)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/chapter.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml?source=.MD#notes.Md",
+            "../config/runtime.yaml.html?source=.MD#notes.Md",
+        )],
+    );
+}
+
+#[test]
+fn failure_raw_html_images_code_and_nonlocal_destinations_remain_byte_identical() {
+    let markdown = concat!(
+        "<a href=\"../config/runtime.yaml\">raw</a>\n\n",
+        "![inline image](../config/runtime.yaml)\n\n",
+        "`[inline code](../config/runtime.yaml)`\n\n",
+        "```markdown\n[fenced code](../config/runtime.yaml)\n```\n\n",
+        "[external](https://example.com/runtime.yaml) ",
+        "[fragment](#runtime) [missing](../config/missing.yaml) ",
+        "[html](../config/runtime.html)\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/chapter.md"), markdown, &routes()).unwrap();
+
+    assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
+}
+
+#[test]
+fn failure_empty_query_root_invalid_percent_and_above_root_destinations_remain_byte_identical() {
+    let markdown = concat!(
+        "[empty]() [query](?mode=raw) [root](/config/runtime.yaml) ",
+        "[invalid](../config/bad%Q0.yaml) [non utf](../config/bad%FE.yaml) ",
+        "[above](../../../config/runtime.yaml)\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/chapter.md"), markdown, &routes()).unwrap();
 
     assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
 }
