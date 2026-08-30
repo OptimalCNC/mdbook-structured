@@ -2,8 +2,9 @@ use mdbook_core::book::{Book, BookItem, Chapter};
 use mdbook_structured_core::{parse_document, render_structured_page};
 
 use crate::{
-    AppDiagnostic, AppDiagnosticKind, ChapterOrdinal, HtmlPreprocessorContext, RenderOptions,
-    preflight_render_routes,
+    AppDiagnostic, AppDiagnosticKind, ChapterOrdinal, HtmlPreprocessorContext, LinkRouteMap,
+    LogicalChapterPath, RenderOptions, RewriteOptions, preflight_render_routes,
+    rewrite_chapter_links,
 };
 
 pub fn render_book(
@@ -36,6 +37,21 @@ pub fn render_book(
         let rendered = render_structured_page(&chapter.name, &document, options.html());
         chapter.content = rendered.as_str().to_owned();
         chapter.path = Some(projected.transformed_logical_path().as_path().to_owned());
+        Ok(())
+    })?;
+
+    Ok(book)
+}
+
+pub fn rewrite_book_links(_options: RewriteOptions, mut book: Book) -> Result<Book, AppDiagnostic> {
+    let routes = LinkRouteMap::from_book(&book)?;
+
+    try_for_each_chapter_preorder_mut(&mut book.items, &mut |chapter| {
+        let Some(path) = chapter.path.as_deref() else {
+            return Ok(());
+        };
+        let path = LogicalChapterPath::try_from_path(path)?;
+        chapter.content = rewrite_chapter_links(&path, &chapter.content, &routes)?;
         Ok(())
     })?;
 

@@ -74,6 +74,16 @@ impl RenderOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RewriteOptions(());
+
+impl RewriteOptions {
+    pub fn from_context(context: &HtmlPreprocessorContext) -> Result<Self, AppDiagnostic> {
+        plugin_options_table(context, "structured-links")?.require_empty("structured-links")?;
+        Ok(Self(()))
+    }
+}
+
 struct PluginOptionsTable(toml::Table);
 
 fn plugin_options_table(
@@ -100,6 +110,17 @@ impl PluginOptionsTable {
     ) -> Result<T, AppDiagnostic> {
         T::deserialize(toml::Value::Table(self.0))
             .map_err(|error| configuration_error(registration, error.to_string()))
+    }
+
+    fn require_empty(self, registration: &'static str) -> Result<(), AppDiagnostic> {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            Err(configuration_error(
+                registration,
+                "contains unknown plugin configuration".to_owned(),
+            ))
+        }
     }
 }
 

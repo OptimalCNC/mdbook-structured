@@ -3,7 +3,10 @@ use std::str::FromStr;
 
 use mdbook_core::book::{Book, BookItem, Chapter, SectionNumber};
 use mdbook_preprocessor::{PreprocessorContext, config::Config};
-use mdbook_structured::{AppDiagnosticKind, HtmlPreprocessorContext, RenderOptions, render_book};
+use mdbook_structured::{
+    AppDiagnosticKind, HtmlPreprocessorContext, RenderOptions, RewriteOptions, render_book,
+    rewrite_book_links,
+};
 
 fn context(root: &Path, renderer: &str, configuration: &str) -> PreprocessorContext {
     PreprocessorContext::new(
@@ -216,4 +219,134 @@ fn render_returns_a_core_diagnostic_when_a_later_structured_chapter_is_malformed
     .unwrap_err();
 
     assert!(error.core_diagnostic().is_some());
+}
+
+#[test]
+fn rewrite_accepts_only_empty_plugin_options_after_mdbook_registration_keys() {
+    let temporary = tempfile::tempdir().unwrap();
+    for configuration in [
+        "[book]\nsrc = \"chapters\"\n",
+        "[book]\nsrc = \"chapters\"\n[preprocessor.structured-links]\n",
+        r#"
+[book]
+src = "chapters"
+
+[preprocessor.structured-links]
+command = "mdbook-structured rewrite-links"
+after = ["links"]
+before = ["html"]
+renderers = ["html"]
+optional = true
+"#,
+    ] {
+        RewriteOptions::from_context(&html_context(temporary.path(), configuration)).unwrap();
+    }
+
+    let error = RewriteOptions::from_context(&html_context(
+        temporary.path(),
+        "[book]\nsrc = \"chapters\"\n[preprocessor.structured-links]\nunknown = true\n",
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        AppDiagnosticKind::Configuration { .. }
+    ));
+}
+
+#[test]
+fn rewrite_rewrites_nested_markdown_links_without_scanning_generated_html() {
+    let temporary = tempfile::tempdir().unwrap();
+    let mut parent = chapter(
+        "Guide",
+        "[runtime](data/runtime.yaml)",
+        "guide.md",
+        "guide.md",
+    );
+    parent.sub_items.push(
+        chapter(
+            "Nested guide",
+            "[runtime](../data/runtime.yaml)",
+            "guide/nested.md",
+            "guide/nested.md",
+        )
+        .into(),
+    );
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        Book::new_with_items(vec![
+            parent.into(),
+            chapter(
+                "Runtime",
+                "link-like: '[guide](guide.md)'\n",
+                "data/runtime.yaml",
+                "data/runtime.md",
+            )
+            .into(),
+        ]),
+    )
+    .unwrap();
+    let generated_html = chapters(&rendered)[2].content.clone();
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        rendered.clone(),
+    )
+    .unwrap();
+    let rewritten_chapters = chapters(&rewritten);
+
+    assert_eq!(
+        rewritten_chapters[0].content,
+        "[runtime](data/runtime.yaml.html)"
+    );
+    assert_eq!(
+        rewritten_chapters[1].content,
+        "[runtime](../data/runtime.yaml.html)"
+    );
+    assert_eq!(rewritten_chapters[2].content, generated_html);
+    assert_preserved_chapter_fields(&rendered, &rewritten);
+}
+
+#[test]
+fn rewrite_rejects_an_ambiguous_authored_alias() {
+    let temporary = tempfile::tempdir().unwrap();
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        Book::new_with_items(vec![
+            chapter("Guide", "[index](config/index.md)", "guide.md", "guide.md").into(),
+            chapter(
+                "YAML README",
+                "yaml-value: first\n",
+                "config/README.yaml",
+                "config/index.md",
+            )
+            .into(),
+            chapter(
+                "JSON README",
+                r#"{"json-value":"second"}"#,
+                "config/README.json",
+                "config/index.md",
+            )
+            .into(),
+        ]),
+    )
+    .unwrap();
+
+    let error = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        rendered,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error.kind(),
+        AppDiagnosticKind::AmbiguousAlias { .. }
+    ));
 }
