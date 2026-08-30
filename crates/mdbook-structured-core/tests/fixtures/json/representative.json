@@ -1,0 +1,10 @@
+{
+  "": "",
+  "enabled": true,
+  "text": "true",
+  "amount": 1.2300e+04,
+  "items": [
+    null,
+    {"name": "x", "flag": false, "empty": "", "count": 0}
+  ]
+}
