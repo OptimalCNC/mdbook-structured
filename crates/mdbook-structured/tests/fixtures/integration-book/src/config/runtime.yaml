@@ -1,0 +1,17 @@
+service:
+  name: api
+  ports:
+    - 8080
+    - 8443
+  display:
+    "": ""
+    long: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-repeat-without-truncation"
+    multiline: |-
+      line one
+      line two
+large:
+  one: 1
+  two: 2
+  three: 3
+  four: 4
+literal: "{{#include missing.md}}"

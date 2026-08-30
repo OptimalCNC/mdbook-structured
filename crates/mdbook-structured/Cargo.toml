@@ -16,4 +16,6 @@ toml_edit = "0.23"
 
 [dev-dependencies]
 assert_cmd = "2"
+scraper = { workspace = true }
+shlex = "1"
 tempfile.workspace = true

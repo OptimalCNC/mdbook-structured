@@ -1,0 +1,25 @@
+[book]
+title = "mdbook-structured integration"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[preprocessor.structured]
+command = "mdbook-structured render"
+after = ["index"]
+before = ["links"]
+renderers = ["html"]
+max-input-bytes = 1048576
+max-nodes = 10000
+max-depth = 64
+large-container-threshold = 3
+
+[preprocessor.structured-links]
+command = "mdbook-structured rewrite-links"
+after = ["links"]
+renderers = ["html"]
+
+[output.html]
+additional-css = ["mdbook-structured.css"]
+additional-js = ["mdbook-structured.js"]
