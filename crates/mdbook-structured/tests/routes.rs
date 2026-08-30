@@ -286,3 +286,50 @@ fn projects_exact_ordinary_static_source_collision() {
     assert_eq!(static_source, &source_dir.path().join("guide.html"));
     assert_eq!(book, before);
 }
+
+#[cfg(unix)]
+#[test]
+fn projects_exact_output_symlink_to_file_is_static_collision() {
+    let source_dir = tempfile::tempdir().unwrap();
+    fs::write(source_dir.path().join("static-target.txt"), "static").unwrap();
+    std::os::unix::fs::symlink("static-target.txt", source_dir.path().join("guide.html")).unwrap();
+    let book = Book::new_with_items(vec![chapter("Guide", "guide.md", "guide.md").into()]);
+    let before = book.clone();
+
+    let diagnostic = preflight_render_routes(&book, source_dir.path()).unwrap_err();
+
+    let AppDiagnosticKind::StaticSourceCollision {
+        output_route,
+        static_source,
+    } = diagnostic.kind()
+    else {
+        panic!(
+            "expected static source collision, got {:?}",
+            diagnostic.kind()
+        );
+    };
+    assert_eq!(output_route.as_path(), Path::new("guide.html"));
+    assert_eq!(static_source, &source_dir.path().join("guide.html"));
+    assert_eq!(book, before);
+}
+
+#[cfg(unix)]
+#[test]
+fn projects_dangling_exact_output_symlink_is_io_failure() {
+    let source_dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("missing-target.html", source_dir.path().join("guide.html"))
+        .unwrap();
+    let book = Book::new_with_items(vec![chapter("Guide", "guide.md", "guide.md").into()]);
+    let before = book.clone();
+
+    let diagnostic = preflight_render_routes(&book, source_dir.path()).unwrap_err();
+
+    let AppDiagnosticKind::Io { path } = diagnostic.kind() else {
+        panic!("expected I/O failure, got {:?}", diagnostic.kind());
+    };
+    assert_eq!(
+        path.as_deref(),
+        Some(source_dir.path().join("guide.html").as_path())
+    );
+    assert_eq!(book, before);
+}

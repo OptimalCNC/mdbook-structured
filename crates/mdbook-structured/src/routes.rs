@@ -304,21 +304,19 @@ fn reject_static_source_collisions(
 ) -> Result<(), AppDiagnostic> {
     for chapter in projected_chapters {
         let static_source = source_dir.join(chapter.output_route.as_path());
-        match fs::symlink_metadata(&static_source) {
-            Ok(metadata)
-                if metadata.file_type().is_file()
-                    && static_source.extension().and_then(|value| value.to_str()) != Some("md") =>
-            {
-                return Err(AppDiagnostic::from_kind(
-                    AppDiagnosticKind::StaticSourceCollision {
-                        output_route: chapter.output_route.clone(),
-                        static_source,
-                    },
-                    "a source file would be copied to a projected chapter route".to_owned(),
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
+        let is_file = match fs::symlink_metadata(&static_source) {
+            Ok(metadata) if metadata.file_type().is_symlink() => fs::metadata(&static_source)
+                .map(|target| target.is_file())
+                .map_err(|error| {
+                    AppDiagnostic::from_kind(
+                        AppDiagnosticKind::Io {
+                            path: Some(static_source.clone()),
+                        },
+                        format!("failed to inspect an exact static-source symlink target: {error}"),
+                    )
+                })?,
+            Ok(metadata) => metadata.is_file(),
+            Err(error) if error.kind() == ErrorKind::NotFound => false,
             Err(error) => {
                 return Err(AppDiagnostic::from_kind(
                     AppDiagnosticKind::Io {
@@ -327,6 +325,16 @@ fn reject_static_source_collisions(
                     format!("failed to inspect an exact static-source candidate: {error}"),
                 ));
             }
+        };
+
+        if is_file && static_source.extension().and_then(|value| value.to_str()) != Some("md") {
+            return Err(AppDiagnostic::from_kind(
+                AppDiagnosticKind::StaticSourceCollision {
+                    output_route: chapter.output_route.clone(),
+                    static_source,
+                },
+                "a source file would be copied to a projected chapter route".to_owned(),
+            ));
         }
     }
 
