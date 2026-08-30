@@ -476,6 +476,7 @@ name = "mdbook-structured"
 version = "0.1.0"
 dependencies = [
  "mdbook-core",
+ "mdbook-markdown",
  "mdbook-structured-core",
  "tempfile",
 ]

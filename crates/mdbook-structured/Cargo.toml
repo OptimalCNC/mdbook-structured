@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 mdbook-core.workspace = true
+mdbook-markdown.workspace = true
 mdbook-structured-core.workspace = true
 
 [dev-dependencies]
