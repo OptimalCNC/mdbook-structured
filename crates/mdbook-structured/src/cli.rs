@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::protocol::write_diagnostic;
@@ -7,6 +8,7 @@ use crate::protocol::write_diagnostic;
 enum Command {
     Run(Phase),
     Supports { phase: Phase, renderer: String },
+    Install { directory: Option<PathBuf> },
 }
 
 pub(crate) enum Phase {
@@ -16,6 +18,7 @@ pub(crate) enum Phase {
 
 pub fn run_with_io(
     args: impl IntoIterator<Item = OsString>,
+    current_dir: &Path,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -31,6 +34,9 @@ pub fn run_with_io(
             &format!("mdbook-structured supports only the html renderer, not {renderer}"),
         ),
         Ok(Command::Run(phase)) => crate::protocol::run_phase(phase, stdin, stdout, stderr),
+        Ok(Command::Install { directory }) => {
+            crate::protocol::run_install(current_dir, directory.as_deref(), stdout, stderr)
+        }
         Err(message) => write_diagnostic(stderr, "Protocol", &message),
     }
 }
@@ -41,6 +47,10 @@ fn parse_command(args: impl IntoIterator<Item = OsString>) -> Result<Command, St
     let arguments: Vec<_> = arguments.collect();
 
     match arguments.as_slice() {
+        [command] if command == "install" => Ok(Command::Install { directory: None }),
+        [command, directory] if command == "install" => Ok(Command::Install {
+            directory: Some(PathBuf::from(directory)),
+        }),
         [phase] => Ok(Command::Run(parse_phase(phase)?)),
         [phase, supports, renderer] if supports == "supports" => Ok(Command::Supports {
             phase: parse_phase(phase)?,
@@ -49,7 +59,10 @@ fn parse_command(args: impl IntoIterator<Item = OsString>) -> Result<Command, St
                 .ok_or_else(|| "renderer name is not valid Unicode".to_owned())?
                 .to_owned(),
         }),
-        _ => Err("expected render or rewrite-links with optional supports <renderer>".to_owned()),
+        _ => Err(
+            "expected render or rewrite-links with optional supports <renderer>, or install [DIR]"
+                .to_owned(),
+        ),
     }
 }
 

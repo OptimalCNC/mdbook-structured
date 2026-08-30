@@ -4,6 +4,12 @@ use std::str::FromStr;
 use assert_cmd::Command;
 use mdbook_core::book::{Book, Chapter};
 use mdbook_preprocessor::{PreprocessorContext, config::Config};
+use mdbook_structured::install_assets;
+use toml_edit::DocumentMut;
+
+const BOOK_TOML: &[u8] = b"sentinel = \"unchanged\"\n";
+const CSS_FILE: &str = "mdbook-structured.css";
+const JAVASCRIPT_FILE: &str = "mdbook-structured.js";
 
 fn command(args: &[&str]) -> Command {
     let mut command = Command::cargo_bin("mdbook-structured").unwrap();
@@ -97,7 +103,6 @@ fn capability_rejects_malformed_command_shapes_without_reading_stdin() {
         &["render", "supports"][..],
         &["render", "supports", "html", "extra"][..],
         &["unknown", "supports", "html"][..],
-        &["install"][..],
     ] {
         command(arguments)
             .write_stdin("{")
@@ -105,6 +110,203 @@ fn capability_rejects_malformed_command_shapes_without_reading_stdin() {
             .failure()
             .stdout("");
     }
+}
+
+#[test]
+fn install_omitted_directory_uses_current_book_root() {
+    let temp = book_directory();
+    let before = book_toml_bytes(temp.path());
+
+    let assertion = command(&["install"])
+        .current_dir(temp.path())
+        .assert()
+        .success()
+        .stderr("");
+
+    assert!(temp.path().join(CSS_FILE).is_file());
+    assert!(temp.path().join(JAVASCRIPT_FILE).is_file());
+    assert_registration_paths(&assertion.get_output().stdout, CSS_FILE, JAVASCRIPT_FILE);
+    assert_book_toml_unchanged(temp.path(), &before);
+}
+
+#[test]
+fn install_relative_directory_quotes_are_toml_encoded() {
+    let temp = book_directory();
+    let destination_name = "theme with \"quote\"";
+    let destination = temp.path().join(destination_name);
+    std::fs::create_dir(&destination).unwrap();
+    let before = book_toml_bytes(temp.path());
+
+    let assertion = command(&["install", destination_name])
+        .current_dir(temp.path())
+        .assert()
+        .success()
+        .stderr("");
+
+    assert!(destination.join(CSS_FILE).is_file());
+    assert!(destination.join(JAVASCRIPT_FILE).is_file());
+    assert_registration_paths(
+        &assertion.get_output().stdout,
+        &format!("{destination_name}/{CSS_FILE}"),
+        &format!("{destination_name}/{JAVASCRIPT_FILE}"),
+    );
+    assert_book_toml_unchanged(temp.path(), &before);
+}
+
+#[test]
+fn install_absolute_in_root_directory_emits_book_relative_paths() {
+    let temp = book_directory();
+    let destination = temp.path().join("theme");
+    std::fs::create_dir(&destination).unwrap();
+    let destination = destination.canonicalize().unwrap();
+    let before = book_toml_bytes(temp.path());
+
+    let assertion = Command::cargo_bin("mdbook-structured")
+        .unwrap()
+        .args(["install"])
+        .arg(&destination)
+        .current_dir(temp.path())
+        .assert()
+        .success()
+        .stderr("");
+
+    assert!(destination.join(CSS_FILE).is_file());
+    assert!(destination.join(JAVASCRIPT_FILE).is_file());
+    assert_registration_paths(
+        &assertion.get_output().stdout,
+        &format!("theme/{CSS_FILE}"),
+        &format!("theme/{JAVASCRIPT_FILE}"),
+    );
+    assert_book_toml_unchanged(temp.path(), &before);
+}
+
+#[test]
+fn install_absolute_outside_root_is_configuration_error_before_writes() {
+    let temp = book_directory();
+    let outside = tempfile::tempdir().unwrap();
+    let destination = outside.path().canonicalize().unwrap();
+    let before = book_toml_bytes(temp.path());
+
+    let assertion = Command::cargo_bin("mdbook-structured")
+        .unwrap()
+        .args(["install"])
+        .arg(&destination)
+        .current_dir(temp.path())
+        .assert()
+        .failure();
+
+    assert!(assertion.get_output().stdout.is_empty());
+    assert!(String::from_utf8_lossy(&assertion.get_output().stderr).contains("Configuration"));
+    assert!(!destination.join(CSS_FILE).exists());
+    assert!(!destination.join(JAVASCRIPT_FILE).exists());
+    assert_book_toml_unchanged(temp.path(), &before);
+}
+
+#[test]
+fn install_javascript_conflict_preserves_canonical_css_and_prints_no_instructions() {
+    let temp = book_directory();
+    let before_install = book_toml_bytes(temp.path());
+    install_assets(temp.path()).unwrap();
+    assert_book_toml_unchanged(temp.path(), &before_install);
+    let css_path = temp.path().join(CSS_FILE);
+    let canonical_css = std::fs::read(&css_path).unwrap();
+    let javascript_path = temp.path().join(JAVASCRIPT_FILE);
+    std::fs::write(&javascript_path, b"different js\n").unwrap();
+    let before_command = book_toml_bytes(temp.path());
+
+    let assertion = command(&["install"])
+        .current_dir(temp.path())
+        .assert()
+        .failure();
+
+    let output = assertion.get_output();
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("InstallConflict"));
+    assert!(stderr.contains(javascript_path.to_str().unwrap()));
+    assert_eq!(std::fs::read(css_path).unwrap(), canonical_css);
+    assert_eq!(std::fs::read(javascript_path).unwrap(), b"different js\n");
+    assert_book_toml_unchanged(temp.path(), &before_command);
+}
+
+#[test]
+fn install_missing_and_extra_command_arguments_fail_without_stdout() {
+    for arguments in [&[][..], &["install", "theme", "extra"][..]] {
+        let temp = book_directory();
+        let before = book_toml_bytes(temp.path());
+
+        command(arguments)
+            .current_dir(temp.path())
+            .assert()
+            .failure()
+            .stdout("");
+
+        assert!(!temp.path().join(CSS_FILE).exists());
+        assert!(!temp.path().join(JAVASCRIPT_FILE).exists());
+        assert_book_toml_unchanged(temp.path(), &before);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_non_utf_inside_root_is_configuration_error_before_writes() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = book_directory();
+    let destination = temp.path().join(OsString::from_vec(b"theme-\xff".to_vec()));
+    std::fs::create_dir(&destination).unwrap();
+    let before = book_toml_bytes(temp.path());
+
+    let assertion = Command::cargo_bin("mdbook-structured")
+        .unwrap()
+        .args(["install"])
+        .arg(&destination)
+        .current_dir(temp.path())
+        .assert()
+        .failure();
+
+    assert!(assertion.get_output().stdout.is_empty());
+    assert!(String::from_utf8_lossy(&assertion.get_output().stderr).contains("Configuration"));
+    assert!(!destination.join(CSS_FILE).exists());
+    assert!(!destination.join(JAVASCRIPT_FILE).exists());
+    assert_book_toml_unchanged(temp.path(), &before);
+}
+
+fn book_directory() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("book.toml"), BOOK_TOML).unwrap();
+    temp
+}
+
+fn book_toml_bytes(book_root: &Path) -> Vec<u8> {
+    std::fs::read(book_root.join("book.toml")).unwrap()
+}
+
+fn assert_book_toml_unchanged(book_root: &Path, before: &[u8]) {
+    assert_eq!(book_toml_bytes(book_root), before);
+}
+
+fn assert_registration_paths(stdout: &[u8], css: &str, javascript: &str) {
+    let output = std::str::from_utf8(stdout).unwrap();
+    assert!(output.contains("append"));
+    let document = output.parse::<DocumentMut>().unwrap();
+    assert_eq!(
+        document["output"]["html"]["additional-css"]
+            .as_array()
+            .unwrap()
+            .get(0)
+            .and_then(|value| value.as_str()),
+        Some(css)
+    );
+    assert_eq!(
+        document["output"]["html"]["additional-js"]
+            .as_array()
+            .unwrap()
+            .get(0)
+            .and_then(|value| value.as_str()),
+        Some(javascript)
+    );
 }
 
 #[test]

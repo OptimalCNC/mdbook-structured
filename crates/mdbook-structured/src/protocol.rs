@@ -1,15 +1,97 @@
 use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
 use mdbook_core::book::Book;
 use mdbook_preprocessor::PreprocessorContext;
 use mdbook_structured_core::PathSegment;
+use toml_edit::{Array, DocumentMut, Item, Table, Value};
 
 use crate::cli::Phase;
 use crate::{
-    AppDiagnostic, AppDiagnosticKind, HtmlPreprocessorContext, RewriteOptions, render_book,
-    rewrite_book_links,
+    AppDiagnostic, AppDiagnosticKind, HtmlPreprocessorContext, RewriteOptions, install_assets,
+    render_book, rewrite_book_links,
 };
+
+const CSS_FILE: &str = "mdbook-structured.css";
+const JAVASCRIPT_FILE: &str = "mdbook-structured.js";
+
+struct BookRelativeRegistrationPrefix(Box<str>);
+
+struct BookRelativeRegistrationPath(Box<str>);
+
+struct ResolvedInstallDestination {
+    filesystem_path: PathBuf,
+    registration_prefix: BookRelativeRegistrationPrefix,
+}
+
+impl ResolvedInstallDestination {
+    fn resolve(current_dir: &Path, directory: Option<&Path>) -> Result<Self, AppDiagnostic> {
+        let book_root = current_dir.canonicalize().map_err(|error| {
+            configuration_error(format!(
+                "failed to resolve the current book root {}: {error}",
+                current_dir.display()
+            ))
+        })?;
+        let unresolved_destination = match directory {
+            Some(directory) if directory.is_absolute() => directory.to_path_buf(),
+            Some(directory) => book_root.join(directory),
+            None => book_root.clone(),
+        };
+        let filesystem_path = unresolved_destination.canonicalize().map_err(|error| {
+            configuration_error(format!(
+                "failed to resolve install destination {}: {error}",
+                unresolved_destination.display()
+            ))
+        })?;
+        let stripped = filesystem_path.strip_prefix(&book_root).map_err(|_| {
+            configuration_error(format!(
+                "install destination {} is outside the current book root {}",
+                filesystem_path.display(),
+                book_root.display()
+            ))
+        })?;
+        let registration_prefix = BookRelativeRegistrationPrefix::from_stripped_path(stripped)?;
+
+        Ok(Self {
+            filesystem_path,
+            registration_prefix,
+        })
+    }
+}
+
+impl BookRelativeRegistrationPrefix {
+    fn from_stripped_path(path: &Path) -> Result<Self, AppDiagnostic> {
+        let mut components = Vec::new();
+        for component in path.components() {
+            let Component::Normal(component) = component else {
+                return Err(configuration_error(format!(
+                    "install registration path contains a non-normal component: {}",
+                    path.display()
+                )));
+            };
+            let component = component.to_str().ok_or_else(|| {
+                configuration_error("install registration path is not valid Unicode".to_owned())
+            })?;
+            components.push(component);
+        }
+        Ok(Self(components.join("/").into_boxed_str()))
+    }
+
+    fn join_asset(&self, file_name: &'static str) -> BookRelativeRegistrationPath {
+        if self.0.is_empty() {
+            BookRelativeRegistrationPath(file_name.into())
+        } else {
+            BookRelativeRegistrationPath(format!("{}/{file_name}", self.0).into_boxed_str())
+        }
+    }
+}
+
+impl BookRelativeRegistrationPath {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 pub(crate) fn run_phase(
     phase: Phase,
@@ -33,6 +115,60 @@ pub(crate) fn run_phase(
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => write_app_diagnostic(stderr, &error),
     }
+}
+
+pub(crate) fn run_install(
+    current_dir: &Path,
+    directory: Option<&Path>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let result = (|| -> Result<(), AppDiagnostic> {
+        let destination = ResolvedInstallDestination::resolve(current_dir, directory)?;
+        install_assets(&destination.filesystem_path)?;
+        let css = destination.registration_prefix.join_asset(CSS_FILE);
+        let javascript = destination.registration_prefix.join_asset(JAVASCRIPT_FILE);
+        write_install_instructions(stdout, &css, &javascript)
+    })();
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => write_app_diagnostic(stderr, &error),
+    }
+}
+
+fn write_install_instructions(
+    stdout: &mut dyn Write,
+    css: &BookRelativeRegistrationPath,
+    javascript: &BookRelativeRegistrationPath,
+) -> Result<(), AppDiagnostic> {
+    let mut document = DocumentMut::new();
+    let mut output = Table::new();
+    let mut html = Table::new();
+    html["additional-css"] = Item::Value(Value::Array(single_value_array(css.as_str())));
+    html["additional-js"] = Item::Value(Value::Array(single_value_array(javascript.as_str())));
+    output["html"] = Item::Table(html);
+    document["output"] = Item::Table(output);
+
+    let instructions = format!(
+        "# append these paths to existing arrays; do not replace existing entries\n{document}"
+    );
+    stdout.write_all(instructions.as_bytes()).map_err(|error| {
+        AppDiagnostic::from_kind(
+            AppDiagnosticKind::Io { path: None },
+            format!("failed to write install instructions: {error}"),
+        )
+    })
+}
+
+fn single_value_array(value: &str) -> Array {
+    let mut array = Array::new();
+    array.push(value);
+    array
+}
+
+fn configuration_error(detail: String) -> AppDiagnostic {
+    AppDiagnostic::from_kind(AppDiagnosticKind::Configuration { key: None }, detail)
 }
 
 fn decode_input(stdin: &mut dyn Read) -> Result<(PreprocessorContext, Book), AppDiagnostic> {
