@@ -1,9 +1,12 @@
 #[allow(dead_code)]
 pub(crate) const STRUCTURED_CSS: &'static [u8] = include_bytes!("../assets/mdbook-structured.css");
 
+#[allow(dead_code)]
+pub(crate) const STRUCTURED_JS: &'static [u8] = include_bytes!("../assets/mdbook-structured.js");
+
 #[cfg(test)]
 mod tests {
-    use super::STRUCTURED_CSS;
+    use super::{STRUCTURED_CSS, STRUCTURED_JS};
 
     #[test]
     fn css_exposes_the_frozen_structured_hooks() {
@@ -70,6 +73,26 @@ mod tests {
         let action = declaration_block(css, "[data-structured-action]");
 
         assert!(action.contains("box-sizing: border-box"));
+    }
+
+    #[test]
+    fn js_references_only_the_stable_disclosure_hooks() {
+        let js = std::str::from_utf8(STRUCTURED_JS).expect("embedded JavaScript must be UTF-8");
+
+        for hook in [
+            ".structured-document",
+            "[data-structured-action]",
+            "details[data-structured-container]",
+        ] {
+            assert!(js.contains(hook), "missing JavaScript hook: {hook}");
+        }
+
+        for storage_identifier in ["cookie", "localStorage", "sessionStorage", "indexedDB"] {
+            assert!(
+                !js.contains(storage_identifier),
+                "JavaScript must not use storage: {storage_identifier}"
+            );
+        }
     }
 
     fn declaration_block<'a>(css: &'a str, selector: &str) -> &'a str {
