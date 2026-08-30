@@ -332,45 +332,84 @@ fn preserve_percent_spelling(
         }
     }
 
-    let lookup_segments: Vec<_> = lookup
-        .as_path()
-        .iter()
-        .map(|segment| segment.to_string_lossy())
-        .collect();
-    let output_segments: Vec<_> = output_path
-        .iter()
-        .map(|segment| segment.to_string_lossy())
-        .collect();
+    let normalized_raw = raw_segments.join("/");
+    let lookup_slash = slash_form(lookup.as_path());
+    let output_slash = slash_form(output_path);
+    let preserved_prefix_len = common_utf8_prefix_len(&lookup_slash, &output_slash);
+    let preserved_raw_end = raw_offset_for_decoded_prefix(&normalized_raw, preserved_prefix_len)
+        .ok_or_else(protocol_error)?;
+
     let relative_segments: Vec<_> = relative.split('/').collect();
     let leading_parents = relative_segments
         .iter()
         .take_while(|component| **component == "..")
         .count();
     let output_start = common_prefix_len(current_path.as_path().parent(), output_path);
-    let mut rewritten = Vec::with_capacity(relative_segments.len());
+    let relative_output_start = decoded_component_prefix_len(output_path, output_start);
+    let encoded_suffix = if relative_output_start <= preserved_prefix_len {
+        let raw_output_start =
+            raw_offset_for_decoded_prefix(&normalized_raw, relative_output_start)
+                .ok_or_else(protocol_error)?;
+        format!(
+            "{}{}",
+            &normalized_raw[raw_output_start..preserved_raw_end],
+            &output_slash[preserved_prefix_len..],
+        )
+    } else {
+        output_slash[relative_output_start..].to_owned()
+    };
 
-    rewritten.extend((0..leading_parents).map(|_| "..".to_owned()));
-    for (offset, output) in output_segments[output_start..].iter().enumerate() {
-        let absolute_index = output_start + offset;
-        let authored = raw_segments.get(absolute_index);
-        let decoded = lookup_segments.get(absolute_index);
-        let replacement = match (authored, decoded) {
-            (Some(authored), Some(decoded)) if output.as_ref() == decoded.as_ref() => {
-                authored.clone()
-            }
-            (Some(authored), Some(decoded))
-                if output
-                    .strip_prefix(decoded.as_ref())
-                    .is_some_and(|suffix| suffix == ".html") =>
-            {
-                format!("{authored}.html")
-            }
-            _ => output.to_string(),
-        };
-        rewritten.push(replacement);
+    Ok(format!("{}{encoded_suffix}", "../".repeat(leading_parents)))
+}
+
+fn slash_form(path: &Path) -> String {
+    path.iter()
+        .map(|segment| segment.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn common_utf8_prefix_len(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(left, right)| left == right)
+        .map(|(character, _)| character.len_utf8())
+        .sum()
+}
+
+fn raw_offset_for_decoded_prefix(raw: &str, decoded_prefix_len: usize) -> Option<usize> {
+    let bytes = raw.as_bytes();
+    let mut raw_offset = 0;
+    let mut decoded_len = 0;
+
+    while decoded_len < decoded_prefix_len {
+        if bytes.get(raw_offset) == Some(&b'%') {
+            hex_value(*bytes.get(raw_offset + 1)?)?;
+            hex_value(*bytes.get(raw_offset + 2)?)?;
+            raw_offset += 3;
+        } else {
+            raw_offset += 1;
+        }
+        decoded_len += 1;
     }
 
-    Ok(rewritten.join("/"))
+    (decoded_len == decoded_prefix_len && raw.is_char_boundary(raw_offset)).then_some(raw_offset)
+}
+
+fn decoded_component_prefix_len(path: &Path, component_count: usize) -> usize {
+    path.iter()
+        .take(component_count)
+        .map(|component| component.to_string_lossy().len() + 1)
+        .sum()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn common_prefix_len(left: Option<&Path>, right: &Path) -> usize {

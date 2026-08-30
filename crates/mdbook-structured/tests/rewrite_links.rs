@@ -141,6 +141,22 @@ fn inline_preserves_query_fragment_and_percent_spelling() {
 }
 
 #[test]
+fn inline_preserves_percent_triplet_that_decodes_to_a_path_separator() {
+    let markdown = "[archive](../config%2F(archive)/data.json)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config%2F(archive)/data.json",
+            "../config%2F(archive)/data.json.html",
+        )],
+    );
+}
+
+#[test]
 fn inline_preserves_authored_entities_in_query_and_fragment_bytes() {
     let markdown = "[entity](../config/runtime.yaml?x=&amp;#frag&amp;)\n";
 
