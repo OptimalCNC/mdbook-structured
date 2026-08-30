@@ -101,7 +101,15 @@ impl Budget {
         location: Option<SourceLocation>,
         path: &StructuredPath,
     ) -> Result<(), Diagnostic> {
-        let next_node_count = self.node_count.saturating_add(1);
+        let Some(next_node_count) = self.node_count.checked_add(1) else {
+            return Err(Diagnostic::from_parts(
+                DiagnosticCategory::NodeLimit,
+                source_name.to_owned(),
+                location,
+                Some(path.clone()),
+                "model node count exceeds the representation limit".to_owned(),
+            ));
+        };
         if next_node_count > self.limits.max_nodes.get() {
             return Err(Diagnostic::from_parts(
                 DiagnosticCategory::NodeLimit,
@@ -133,7 +141,9 @@ impl Budget {
     }
 
     pub(crate) fn requires_diagnostic_location(&self, depth: NonZeroUsize) -> bool {
-        self.node_count.saturating_add(1) > self.limits.max_nodes.get()
+        self.node_count
+            .checked_add(1)
+            .is_none_or(|next_node_count| next_node_count > self.limits.max_nodes.get())
             || depth > self.limits.max_depth
     }
 

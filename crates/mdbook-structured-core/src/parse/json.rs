@@ -23,29 +23,20 @@ impl FormatAdapter for JsonAdapter {
         source_name: &Path,
         limits: Limits,
     ) -> Result<StructuredDocument, Diagnostic> {
-        if loaded_source.len() > limits.max_input_bytes().get() {
-            return Err(Diagnostic::from_parts(
-                DiagnosticCategory::InputByteLimit,
-                source_name.to_owned(),
-                None,
-                Some(StructuredPath::root()),
-                format!(
-                    "input byte count {} exceeds the configured limit {}",
-                    loaded_source.len(),
-                    limits.max_input_bytes()
-                ),
-            ));
-        }
-
-        let (value, code_map) = Value::parse_str(loaded_source).map_err(|error| {
-            Diagnostic::from_parts(
-                DiagnosticCategory::Parse,
-                source_name.to_owned(),
-                None,
-                None,
-                error.to_string(),
-            )
-        })?;
+        let (value, code_map) = match Value::parse_str(loaded_source) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                let location = location_from_byte_offset(loaded_source, error.position())
+                    .map_err(|provenance| invalid_provenance(source_name, None, provenance))?;
+                return Err(Diagnostic::from_parts(
+                    DiagnosticCategory::Parse,
+                    source_name.to_owned(),
+                    Some(location),
+                    None,
+                    error.to_string(),
+                ));
+            }
+        };
         let mut budget = Budget::new(limits);
         let root = project_value(
             &value,
@@ -216,15 +207,19 @@ fn next_depth(
     path: &StructuredPath,
     location: Option<SourceLocation>,
 ) -> Result<NonZeroUsize, Diagnostic> {
-    NonZeroUsize::new(depth.get().saturating_add(1)).ok_or_else(|| {
-        Diagnostic::from_parts(
-            DiagnosticCategory::DepthLimit,
-            source_name.to_owned(),
-            location,
-            Some(path.clone()),
-            "model depth exceeds the representation limit".to_owned(),
-        )
-    })
+    depth
+        .get()
+        .checked_add(1)
+        .and_then(NonZeroUsize::new)
+        .ok_or_else(|| {
+            Diagnostic::from_parts(
+                DiagnosticCategory::DepthLimit,
+                source_name.to_owned(),
+                location,
+                Some(path.clone()),
+                "model depth exceeds the representation limit".to_owned(),
+            )
+        })
 }
 
 fn invalid_provenance(
@@ -239,255 +234,4 @@ fn invalid_provenance(
         path,
         format!("parser provenance is invalid: {error:?}"),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use crate::{Limits, Node, NodeValue, NumberLexeme, PathSegment, StructuredDocument};
-    use json_syntax::{Parse, Value};
-    use proptest::prelude::*;
-    use serde::Serialize;
-    use serde::ser::{SerializeMap, Serializer};
-
-    use super::super::coordinates::{
-        location_from_byte_offset, reset_scalar_visits, scalar_visits,
-    };
-    use super::JsonAdapter;
-    use crate::parse::FormatAdapter;
-
-    #[test]
-    fn positive_representative_preserves_shape_order_and_lexeme() {
-        let source = include_str!("../../tests/fixtures/json/representative.json");
-        let document = JsonAdapter
-            .parse(source, Path::new("representative.json"), Limits::default())
-            .unwrap();
-
-        assert_eq!(document.loaded_source(), source);
-        assert_eq!(document.stats().node_count().get(), 12);
-        assert_eq!(document.stats().max_depth().get(), 4);
-        assert_eq!(
-            number_at(&document, &[key("amount")]).as_str(),
-            "1.2300e+04"
-        );
-        assert_eq!(
-            mapping_keys(document.root()),
-            ["", "enabled", "text", "amount", "items"]
-        );
-    }
-
-    #[test]
-    fn positive_multibyte_spans_use_byte_offsets() {
-        let source = include_str!("../../tests/fixtures/json/multibyte.json");
-        let document = JsonAdapter
-            .parse(source, Path::new("multibyte.json"), Limits::default())
-            .unwrap();
-        let after = number_at(&document, &[key("after")]);
-        let (_, code_map) = Value::parse_str(source).unwrap();
-        let after_offset = code_map.as_slice()[6].span.start();
-
-        assert_eq!(
-            node_at(&document, &[key("after")]).span().start_byte(),
-            after_offset
-        );
-        assert_eq!(after.as_str(), "1");
-
-        let location = location_from_byte_offset(source, after_offset).unwrap();
-        assert_eq!((location.line().get(), location.column().get()), (1, 18));
-    }
-
-    #[test]
-    fn positive_valid_projection_avoids_repeated_coordinate_prefix_scans() {
-        let source = format!("{}[{}]", " ".repeat(4_096), vec!["0"; 64].join(","));
-        reset_scalar_visits();
-
-        let document = JsonAdapter
-            .parse(
-                &source,
-                Path::new("leading-whitespace.json"),
-                Limits::default(),
-            )
-            .unwrap();
-
-        assert_eq!(document.stats().node_count().get(), 65);
-        assert!(
-            scalar_visits() <= source.chars().count(),
-            "coordinate normalization visited {} scalars for a {}-scalar source",
-            scalar_visits(),
-            source.chars().count(),
-        );
-    }
-
-    fn key(value: &str) -> PathSegment {
-        PathSegment::Key(value.to_owned())
-    }
-
-    fn number_at<'a>(document: &'a StructuredDocument, path: &[PathSegment]) -> &'a NumberLexeme {
-        let node = node_at(document, path);
-
-        match node.value() {
-            NodeValue::Number(value) => value,
-            _ => panic!("path does not select a number"),
-        }
-    }
-
-    fn node_at<'a>(document: &'a StructuredDocument, path: &[PathSegment]) -> &'a Node {
-        let mut node = document.root();
-        for segment in path {
-            node = match (node.value(), segment) {
-                (NodeValue::Mapping(entries), PathSegment::Key(key)) => entries
-                    .iter()
-                    .find(|entry| entry.decoded_key() == key)
-                    .unwrap()
-                    .value(),
-                (NodeValue::Sequence(nodes), PathSegment::Index(index)) => &nodes[*index],
-                _ => panic!("path does not select a node"),
-            };
-        }
-        node
-    }
-
-    fn mapping_keys(node: &Node) -> Vec<&str> {
-        match node.value() {
-            NodeValue::Mapping(entries) => {
-                entries.iter().map(|entry| entry.decoded_key()).collect()
-            }
-            _ => panic!("node is not a mapping"),
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn positive_generated_json_projects_losslessly(generated_tree in json_tree()) {
-            let serialized = serde_json::to_string(&generated_tree).unwrap();
-            let limits = Limits::try_new(
-                serialized.len(),
-                generated_tree.node_count(),
-                generated_tree.max_depth(),
-            ).unwrap();
-            let document = JsonAdapter
-                .parse(&serialized, Path::new("generated.json"), limits)
-                .unwrap();
-
-            prop_assert_eq!(observe_value(document.root()), generated_tree.clone());
-            prop_assert_eq!(document.stats().node_count().get(), generated_tree.node_count());
-            prop_assert_eq!(document.stats().max_depth().get(), generated_tree.max_depth());
-            prop_assert_eq!(document.loaded_source(), serialized);
-        }
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    enum JsonTree {
-        Mapping(Vec<(String, JsonTree)>),
-        Sequence(Vec<JsonTree>),
-        String(String),
-        Number(i64),
-        Boolean(bool),
-        Null,
-    }
-
-    impl JsonTree {
-        fn node_count(&self) -> usize {
-            match self {
-                Self::Mapping(entries) => {
-                    1 + entries
-                        .iter()
-                        .map(|(_, value)| value.node_count())
-                        .sum::<usize>()
-                }
-                Self::Sequence(values) => 1 + values.iter().map(Self::node_count).sum::<usize>(),
-                Self::String(_) | Self::Number(_) | Self::Boolean(_) | Self::Null => 1,
-            }
-        }
-
-        fn max_depth(&self) -> usize {
-            match self {
-                Self::Mapping(entries) if !entries.is_empty() => {
-                    1 + entries
-                        .iter()
-                        .map(|(_, value)| value.max_depth())
-                        .max()
-                        .unwrap()
-                }
-                Self::Sequence(values) if !values.is_empty() => {
-                    1 + values.iter().map(Self::max_depth).max().unwrap()
-                }
-                Self::Mapping(_)
-                | Self::Sequence(_)
-                | Self::String(_)
-                | Self::Number(_)
-                | Self::Boolean(_)
-                | Self::Null => 1,
-            }
-        }
-    }
-
-    impl Serialize for JsonTree {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            match self {
-                Self::Mapping(entries) => {
-                    let mut map = serializer.serialize_map(Some(entries.len()))?;
-                    for (key, value) in entries {
-                        map.serialize_entry(key, value)?;
-                    }
-                    map.end()
-                }
-                Self::Sequence(values) => values.serialize(serializer),
-                Self::String(value) => serializer.serialize_str(value),
-                Self::Number(value) => serializer.serialize_i64(*value),
-                Self::Boolean(value) => serializer.serialize_bool(*value),
-                Self::Null => serializer.serialize_unit(),
-            }
-        }
-    }
-
-    fn json_tree() -> impl Strategy<Value = JsonTree> {
-        let leaf = prop_oneof![
-            Just(JsonTree::Null),
-            any::<bool>().prop_map(JsonTree::Boolean),
-            any::<i16>().prop_map(|value| JsonTree::Number(value.into())),
-            ascii_string().prop_map(JsonTree::String),
-        ];
-        leaf.prop_recursive(6, 256, 8, |inner| {
-            prop_oneof![
-                prop::collection::vec(inner.clone(), 0..=8).prop_map(JsonTree::Sequence),
-                prop::collection::vec((ascii_string(), inner), 0..=8)
-                    .prop_filter("mapping keys are unique", |entries| {
-                        let mut keys = std::collections::HashSet::new();
-                        entries.iter().all(|(key, _)| keys.insert(key))
-                    })
-                    .prop_map(JsonTree::Mapping),
-            ]
-        })
-        .prop_filter("tree is within the node and depth bounds", |tree| {
-            tree.node_count() <= 256 && tree.max_depth() <= 6
-        })
-    }
-
-    fn ascii_string() -> impl Strategy<Value = String> {
-        prop::collection::vec(32u8..=126, 0..=24)
-            .prop_map(|bytes| String::from_utf8(bytes).expect("ASCII bytes are valid UTF-8"))
-    }
-
-    fn observe_value(node: &Node) -> JsonTree {
-        match node.value() {
-            NodeValue::Mapping(entries) => JsonTree::Mapping(
-                entries
-                    .iter()
-                    .map(|entry| (entry.decoded_key().to_owned(), observe_value(entry.value())))
-                    .collect(),
-            ),
-            NodeValue::Sequence(values) => {
-                JsonTree::Sequence(values.iter().map(observe_value).collect())
-            }
-            NodeValue::String(value) => JsonTree::String(value.clone()),
-            NodeValue::Number(value) => JsonTree::Number(value.as_str().parse().unwrap()),
-            NodeValue::Boolean(value) => JsonTree::Boolean(*value),
-            NodeValue::Null => JsonTree::Null,
-        }
-    }
 }

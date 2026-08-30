@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 json-syntax.workspace = true
+rlsp-yaml-parser.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

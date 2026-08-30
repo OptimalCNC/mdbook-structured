@@ -1,0 +1,5 @@
+# retained comment
+quoted: "  keep both sides  "
+block: |-
+  line one
+  line two

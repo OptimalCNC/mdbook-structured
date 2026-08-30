@@ -1,7 +1,6 @@
 mod diagnostic;
 mod limits;
 mod model;
-#[allow(dead_code)]
 mod parse;
 
 pub use diagnostic::{Diagnostic, DiagnosticCategory, PathSegment, SourceLocation, StructuredPath};
@@ -10,3 +9,4 @@ pub use model::{
     DocumentStats, MappingEntry, Node, NodeValue, NumberLexeme, SourceSpan, StructuredDocument,
     StructuredFormat,
 };
+pub use parse::parse_document;

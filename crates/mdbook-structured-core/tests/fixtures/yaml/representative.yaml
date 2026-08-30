@@ -1,0 +1,11 @@
+# retained in loaded_source
+"": ""
+enabled: TRUE
+text: "true"
+amount: 1.2300e+04
+items:
+  - null
+  - name: x
+    flag: false
+    empty: ""
+    count: 0
