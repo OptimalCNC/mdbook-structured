@@ -8,7 +8,8 @@ use mdbook_structured_core::{
 };
 use scraper::{Html, Selector};
 use support::observed_document::{
-    ObservedDocument, ObservedLabel, ObservedNode, ScalarKind, observe_rendered_html,
+    ObservedDocument, ObservedLabel, ObservedNode, ScalarKind, observe_raw_html,
+    observe_rendered_html,
 };
 
 const REPRESENTATIVE_JSON: &str = r#"{
@@ -31,6 +32,98 @@ const SAFETY_JSON: &str = r#"{
   "markup": "<img src=x onerror=alert(1)>",
   "multiline": "line one\nline two"
 }"#;
+
+const VALID_PROBE_HTML: &str = r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><details data-structured-container data-structured-node="mapping" open><summary>Mapping</summary><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></details><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details></section>"#;
+
+#[test]
+fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
+    let cases = [
+        (
+            "nested heading",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<h1>Probe</h1>",
+                "<div><h1>Probe</h1></div>",
+            ),
+        ),
+        (
+            "nested actions",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<button data-structured-action=\"expand-all\">Expand all</button><button data-structured-action=\"collapse-all\">Collapse all</button>",
+                "<div><button data-structured-action=\"expand-all\">Expand all</button><button data-structured-action=\"collapse-all\">Collapse all</button></div>",
+            ),
+        ),
+        (
+            "non-details container",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<details data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary><div data-structured-node=\"string\">",
+                "<div data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary><div data-structured-node=\"string\">",
+            )
+            .replacen("</div></details><details data-structured-original-source>", "</div></div><details data-structured-original-source>", 1),
+        ),
+        (
+            "missing container hook and direct summary",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<details data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary>",
+                "<details data-structured-node=\"mapping\" open><div><summary>Mapping</summary></div>",
+            ),
+        ),
+        (
+            "nested original source",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<details data-structured-original-source>",
+                "<div><details data-structured-original-source>",
+            )
+            .replacen("</details></section>", "</details></div></section>", 1),
+        ),
+        (
+            "original source before root",
+            r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details><details data-structured-container data-structured-node="mapping" open><summary>Mapping</summary><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></details></section>"#.to_owned(),
+        ),
+        (
+            "stray unknown empty hook",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<span data-structured-value>value</span>",
+                "<span data-structured-value>value</span><i data-structured-empty=\"unknown\"></i>",
+            ),
+        ),
+        (
+            "stray key marker on non-label",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<span data-structured-value>value</span>",
+                "<span data-structured-value>value</span><i data-structured-empty=\"key\"></i>",
+            ),
+        ),
+        (
+            "unknown empty hook on structured root",
+            mutate_once(
+                VALID_PROBE_HTML,
+                "<section class=\"structured-document\">",
+                "<section class=\"structured-document\" data-structured-empty=\"unknown\">",
+            ),
+        ),
+    ];
+
+    let accepted = cases
+        .iter()
+        .filter_map(|(name, html)| {
+            std::panic::catch_unwind(|| observe_raw_html(html))
+                .is_ok()
+                .then_some(*name)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        accepted.is_empty(),
+        "observer accepted malformed DOM cases: {accepted:?}"
+    );
+}
 
 #[test]
 fn positive_semantic_tree_preserves_types_order_disclosure_and_source() {
@@ -260,4 +353,13 @@ fn scalar_index(
         text: text.to_owned(),
         empty_string_marker,
     }
+}
+
+fn mutate_once(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(
+        source.matches(from).count(),
+        1,
+        "mutation target must occur exactly once"
+    );
+    source.replacen(from, to, 1)
 }
