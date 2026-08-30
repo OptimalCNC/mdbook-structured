@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 
@@ -20,31 +21,137 @@ struct ScannedDestination {
     angle_wrapped: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DefinitionKey {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Default)]
+struct ReferenceUses {
+    normal_link: bool,
+    image: bool,
+}
+
+struct ReferenceDefinition {
+    label: String,
+    destination: String,
+    span: Range<usize>,
+}
+
 pub fn rewrite_chapter_links(
     current_path: &LogicalChapterPath,
     markdown: &str,
     routes: &LinkRouteMap,
 ) -> Result<String, AppDiagnostic> {
-    let parser = new_cmark_parser(markdown, &MarkdownOptions::default());
+    let definition_parser = new_cmark_parser(markdown, &MarkdownOptions::default());
+    let reference_definitions = definition_parser.reference_definitions().clone();
+    let definitions_by_span: BTreeMap<_, _> = reference_definitions
+        .iter()
+        .map(|(label, definition)| {
+            (
+                definition_key(&definition.span),
+                ReferenceDefinition {
+                    label: label.to_owned(),
+                    destination: definition.dest.to_string(),
+                    span: definition.span.clone(),
+                },
+            )
+        })
+        .collect();
+    let mut reference_uses = BTreeMap::<DefinitionKey, ReferenceUses>::new();
     let mut edits = Vec::new();
 
+    let parser = new_cmark_parser(markdown, &MarkdownOptions::default());
     for (event, source_range) in parser.into_offset_iter() {
-        let Event::Start(Tag::Link {
-            link_type: LinkType::Inline,
-            dest_url,
-            ..
-        }) = event
+        match event {
+            Event::Start(Tag::Link {
+                link_type: LinkType::Inline,
+                dest_url,
+                ..
+            }) => {
+                let scanned = scan_inline_destination(markdown, source_range, dest_url.as_ref())?;
+                if let Some(edit) =
+                    build_edit(current_path, scanned.range, dest_url.as_ref(), routes)?
+                {
+                    edits.push(edit);
+                }
+            }
+            Event::Start(Tag::Link { link_type, id, .. }) if is_reference_link_type(link_type) => {
+                record_reference_use(
+                    &reference_definitions,
+                    id.as_ref(),
+                    &mut reference_uses,
+                    false,
+                )?;
+            }
+            Event::Start(Tag::Image { link_type, id, .. }) if is_reference_link_type(link_type) => {
+                record_reference_use(
+                    &reference_definitions,
+                    id.as_ref(),
+                    &mut reference_uses,
+                    true,
+                )?;
+            }
+            _ => {}
+        }
+    }
+
+    for (key, uses) in reference_uses {
+        if !uses.normal_link {
+            continue;
+        }
+        let definition = definitions_by_span.get(&key).ok_or_else(protocol_error)?;
+        let scanned =
+            scan_reference_destination(markdown, definition.span.clone(), &definition.destination)?;
+        let Some(edit) = build_edit(current_path, scanned.range, &definition.destination, routes)?
         else {
             continue;
         };
 
-        let scanned = scan_inline_destination(markdown, source_range, dest_url.as_ref())?;
-        if let Some(edit) = build_edit(current_path, scanned.range, dest_url.as_ref(), routes)? {
-            edits.push(edit);
+        if uses.image {
+            return Err(AppDiagnostic::from_kind(
+                AppDiagnosticKind::MixedReferenceUse {
+                    reference_label: definition.label.clone(),
+                    destination: definition.destination.clone(),
+                },
+                "a changed reference definition is shared by a link and an image".to_owned(),
+            ));
         }
+        edits.push(edit);
     }
 
     apply_edits(markdown, edits)
+}
+
+fn is_reference_link_type(link_type: LinkType) -> bool {
+    matches!(
+        link_type,
+        LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut
+    )
+}
+
+fn record_reference_use(
+    definitions: &mdbook_markdown::pulldown_cmark::RefDefs<'_>,
+    id: &str,
+    uses: &mut BTreeMap<DefinitionKey, ReferenceUses>,
+    image: bool,
+) -> Result<(), AppDiagnostic> {
+    let definition = definitions.get(id).ok_or_else(protocol_error)?;
+    let uses = uses.entry(definition_key(&definition.span)).or_default();
+    if image {
+        uses.image = true;
+    } else {
+        uses.normal_link = true;
+    }
+    Ok(())
+}
+
+fn definition_key(span: &Range<usize>) -> DefinitionKey {
+    DefinitionKey {
+        start: span.start,
+        end: span.end,
+    }
 }
 
 fn build_edit(
@@ -230,58 +337,7 @@ fn scan_inline_suffix(source: &str, opening: usize) -> Option<ScannedDestination
     let bytes = source.as_bytes();
     let mut cursor = opening + 1;
     scan_whitespace(bytes, &mut cursor);
-
-    let (range, angle_wrapped) = if bytes.get(cursor) == Some(&b'<') {
-        cursor += 1;
-        let start = cursor;
-        while cursor < bytes.len() {
-            match bytes[cursor] {
-                b'\n' | b'\r' | b'<' => return None,
-                b'>' => break,
-                b'\\'
-                    if bytes
-                        .get(cursor + 1)
-                        .is_some_and(|byte| is_ascii_punctuation(*byte)) =>
-                {
-                    cursor += 2;
-                    continue;
-                }
-                _ => cursor += 1,
-            }
-        }
-        let end = cursor;
-        (bytes.get(cursor).is_some_and(|byte| *byte == b'>')).then(|| cursor += 1)?;
-        (start..end, true)
-    } else {
-        let start = cursor;
-        let mut nesting = 0usize;
-        while cursor < bytes.len() {
-            match bytes[cursor] {
-                0x00..=0x20 => break,
-                b'(' => {
-                    nesting += 1;
-                    cursor += 1;
-                }
-                b')' if nesting == 0 => break,
-                b')' => {
-                    nesting -= 1;
-                    cursor += 1;
-                }
-                b'\\'
-                    if bytes
-                        .get(cursor + 1)
-                        .is_some_and(|byte| is_ascii_punctuation(*byte)) =>
-                {
-                    cursor += 2;
-                }
-                _ => cursor += 1,
-            }
-        }
-        if nesting != 0 {
-            return None;
-        }
-        (start..cursor, false)
-    };
+    let (range, angle_wrapped) = scan_destination(bytes, &mut cursor)?;
 
     scan_whitespace(bytes, &mut cursor);
     if matches!(bytes.get(cursor), Some(b'\'' | b'"' | b'(')) {
@@ -292,6 +348,104 @@ fn scan_inline_suffix(source: &str, opening: usize) -> Option<ScannedDestination
         range,
         angle_wrapped,
     })
+}
+
+fn scan_reference_destination(
+    markdown: &str,
+    source_range: Range<usize>,
+    parser_destination: &str,
+) -> Result<ScannedDestination, AppDiagnostic> {
+    let source = markdown
+        .get(source_range.clone())
+        .ok_or_else(protocol_error)?;
+    let bytes = source.as_bytes();
+    let mut matches = Vec::new();
+
+    for colon in 0..bytes.len() {
+        if bytes[colon] != b':' {
+            continue;
+        }
+        let mut cursor = colon + 1;
+        scan_whitespace(bytes, &mut cursor);
+        let Some((range, angle_wrapped)) = scan_destination(bytes, &mut cursor) else {
+            continue;
+        };
+        scan_whitespace(bytes, &mut cursor);
+        if matches!(bytes.get(cursor), Some(b'\'' | b'"' | b'(')) {
+            let Some(after_title) = scan_title(bytes, cursor) else {
+                continue;
+            };
+            cursor = after_title;
+            scan_whitespace(bytes, &mut cursor);
+        }
+        if cursor != bytes.len() {
+            continue;
+        }
+
+        let raw = &source[range.clone()];
+        if decode_scanned_destination(raw, angle_wrapped).as_deref() == Some(parser_destination) {
+            matches.push(ScannedDestination {
+                range: (source_range.start + range.start)..(source_range.start + range.end),
+                angle_wrapped,
+            });
+        }
+    }
+
+    match matches.len() {
+        1 => Ok(matches.remove(0)),
+        _ => Err(protocol_error()),
+    }
+}
+
+fn scan_destination(bytes: &[u8], cursor: &mut usize) -> Option<(Range<usize>, bool)> {
+    if bytes.get(*cursor) == Some(&b'<') {
+        *cursor += 1;
+        let start = *cursor;
+        while *cursor < bytes.len() {
+            match bytes[*cursor] {
+                b'\n' | b'\r' | b'<' => return None,
+                b'>' => break,
+                b'\\'
+                    if bytes
+                        .get(*cursor + 1)
+                        .is_some_and(|byte| is_ascii_punctuation(*byte)) =>
+                {
+                    *cursor += 2;
+                    continue;
+                }
+                _ => *cursor += 1,
+            }
+        }
+        let end = *cursor;
+        (bytes.get(*cursor).is_some_and(|byte| *byte == b'>')).then(|| *cursor += 1)?;
+        return Some((start..end, true));
+    }
+
+    let start = *cursor;
+    let mut nesting = 0usize;
+    while *cursor < bytes.len() {
+        match bytes[*cursor] {
+            0x00..=0x20 => break,
+            b'(' => {
+                nesting += 1;
+                *cursor += 1;
+            }
+            b')' if nesting == 0 => break,
+            b')' => {
+                nesting -= 1;
+                *cursor += 1;
+            }
+            b'\\'
+                if bytes
+                    .get(*cursor + 1)
+                    .is_some_and(|byte| is_ascii_punctuation(*byte)) =>
+            {
+                *cursor += 2;
+            }
+            _ => *cursor += 1,
+        }
+    }
+    (nesting == 0).then_some((start..*cursor, false))
 }
 
 fn scan_title(bytes: &[u8], mut cursor: usize) -> Option<usize> {

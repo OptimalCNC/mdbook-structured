@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use mdbook_core::book::{Book, Chapter};
-use mdbook_structured::{LinkRouteMap, LogicalChapterPath, rewrite_chapter_links};
+use mdbook_structured::{
+    AppDiagnosticKind, LinkRouteMap, LogicalChapterPath, rewrite_chapter_links,
+};
 
 fn chapter(name: &str, source_path: &str, logical_path: &str) -> Chapter {
     let mut chapter = Chapter::new(name, String::new(), source_path, Vec::new());
@@ -184,6 +186,88 @@ fn inline_leaves_external_fragment_and_html_destinations_unchanged() {
     );
 
     let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
+}
+
+#[test]
+fn reference_rewrites_full_collapsed_and_shortcut_definition_destinations() {
+    let markdown = concat!(
+        "[full][runtime] [collapsed][] [Shortcut]\n\n",
+        "[runtime]: ../config/runtime.yaml \"full title\"\n",
+        "[collapsed]: <../config/runtime.yaml> 'collapsed title'\n",
+        "[shortcut]: ../config/runtime.yaml (shortcut title)\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[
+            ("../config/runtime.yaml", "../config/runtime.yaml.html"),
+            ("../config/runtime.yaml", "../config/runtime.yaml.html"),
+            ("../config/runtime.yaml", "../config/runtime.yaml.html"),
+        ],
+    );
+}
+
+#[test]
+fn reference_shared_normal_definition_is_edited_once() {
+    let markdown = concat!(
+        "[first][runtime] and [second][runtime].\n\n",
+        "[runtime]: ../config/runtime.yaml \"shared title\"\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[("../config/runtime.yaml", "../config/runtime.yaml.html")],
+    );
+}
+
+#[test]
+fn reference_image_only_definition_remains_byte_identical() {
+    let markdown = concat!(
+        "![runtime diagram][runtime]\n\n",
+        "[runtime]: ../config/runtime.yaml \"image title\"\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
+}
+
+#[test]
+fn reference_case_folded_mixed_link_and_image_use_is_rejected() {
+    let markdown = concat!(
+        "[text][Foo] and ![alt][foo]\n\n",
+        "[Foo]: config/runtime.yaml\n",
+    );
+
+    let error = rewrite_chapter_links(&path("chapter.md"), markdown, &routes()).unwrap_err();
+
+    let AppDiagnosticKind::MixedReferenceUse {
+        reference_label,
+        destination,
+    } = error.kind()
+    else {
+        panic!("expected a mixed-reference-use diagnostic");
+    };
+    assert_eq!(reference_label, "Foo");
+    assert_eq!(destination, "config/runtime.yaml");
+}
+
+#[test]
+fn reference_mixed_use_is_allowed_when_the_destination_would_not_change() {
+    let markdown = concat!(
+        "[text][Missing] and ![alt][missing]\n\n",
+        "[Missing]: missing.yaml\n",
+    );
+
+    let rewritten = rewrite_chapter_links(&path("chapter.md"), markdown, &routes()).unwrap();
 
     assert_eq!(rewritten.as_bytes(), markdown.as_bytes());
 }
