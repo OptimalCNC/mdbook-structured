@@ -1,8 +1,8 @@
 .structured-document {
   --structured-string: var(--links, #0969da);
-  --structured-number: var(--links, #8250df);
-  --structured-boolean: var(--fg, #953800);
-  --structured-null: var(--fg, #6e7781);
+  --structured-number: color-mix(in srgb, var(--fg, #24292f) 72%, #8250df);
+  --structured-boolean: color-mix(in srgb, var(--sidebar-bg, #f6f8fa) 18%, #953800);
+  --structured-null: color-mix(in srgb, var(--theme-hover, rgba(127, 127, 127, 0.12)) 25%, #6e7781);
   --structured-border: var(--sidebar-bg, #d0d7de);
   --structured-hover: var(--theme-hover, rgba(127, 127, 127, 0.12));
   --structured-focus: var(--links, #0969da);
@@ -22,6 +22,7 @@
   background: var(--sidebar-bg, #f6f8fa);
   border: 1px solid var(--structured-border);
   border-radius: 0.25rem;
+  box-sizing: border-box;
   color: var(--fg, #24292f);
   cursor: pointer;
   display: inline-block;
