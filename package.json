@@ -4,6 +4,7 @@
     "test:browser": "playwright test"
   },
   "devDependencies": {
+    "@iarna/toml": "2.2.5",
     "@playwright/test": "1.55.0"
   }
 }
