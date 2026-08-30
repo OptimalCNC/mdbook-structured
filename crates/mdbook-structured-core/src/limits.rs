@@ -132,6 +132,11 @@ impl Budget {
         Ok(())
     }
 
+    pub(crate) fn requires_diagnostic_location(&self, depth: NonZeroUsize) -> bool {
+        self.node_count.saturating_add(1) > self.limits.max_nodes.get()
+            || depth > self.limits.max_depth
+    }
+
     pub(crate) fn finish(self) -> DocumentStats {
         DocumentStats::from_measured(
             NonZeroUsize::new(self.node_count).expect("a document has a root node"),

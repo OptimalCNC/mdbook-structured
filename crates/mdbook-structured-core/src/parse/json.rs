@@ -79,9 +79,12 @@ fn project_value(
     budget: &mut Budget,
 ) -> Result<Node, Diagnostic> {
     let span = span_at(code_map, fragment_index, loaded_source, source_name, path)?;
-    let location = location_from_byte_offset(loaded_source, span.start_byte())
+    let location = budget
+        .requires_diagnostic_location(depth)
+        .then(|| location_from_byte_offset(loaded_source, span.start_byte()))
+        .transpose()
         .map_err(|error| invalid_provenance(source_name, Some(path.clone()), error))?;
-    budget.enter_node(depth, source_name, Some(location), path)?;
+    budget.enter_node(depth, source_name, location, path)?;
 
     let value = match value {
         Value::Null => NodeValue::Null,
@@ -211,13 +214,13 @@ fn next_depth(
     depth: NonZeroUsize,
     source_name: &Path,
     path: &StructuredPath,
-    location: SourceLocation,
+    location: Option<SourceLocation>,
 ) -> Result<NonZeroUsize, Diagnostic> {
     NonZeroUsize::new(depth.get().saturating_add(1)).ok_or_else(|| {
         Diagnostic::from_parts(
             DiagnosticCategory::DepthLimit,
             source_name.to_owned(),
-            Some(location),
+            location,
             Some(path.clone()),
             "model depth exceeds the representation limit".to_owned(),
         )
@@ -248,7 +251,9 @@ mod tests {
     use serde::Serialize;
     use serde::ser::{SerializeMap, Serializer};
 
-    use super::super::coordinates::location_from_byte_offset;
+    use super::super::coordinates::{
+        location_from_byte_offset, reset_scalar_visits, scalar_visits,
+    };
     use super::JsonAdapter;
     use crate::parse::FormatAdapter;
 
@@ -290,6 +295,28 @@ mod tests {
 
         let location = location_from_byte_offset(source, after_offset).unwrap();
         assert_eq!((location.line().get(), location.column().get()), (1, 18));
+    }
+
+    #[test]
+    fn positive_valid_projection_avoids_repeated_coordinate_prefix_scans() {
+        let source = format!("{}[{}]", " ".repeat(4_096), vec!["0"; 64].join(","));
+        reset_scalar_visits();
+
+        let document = JsonAdapter
+            .parse(
+                &source,
+                Path::new("leading-whitespace.json"),
+                Limits::default(),
+            )
+            .unwrap();
+
+        assert_eq!(document.stats().node_count().get(), 65);
+        assert!(
+            scalar_visits() <= source.chars().count(),
+            "coordinate normalization visited {} scalars for a {}-scalar source",
+            scalar_visits(),
+            source.chars().count(),
+        );
     }
 
     fn key(value: &str) -> PathSegment {
