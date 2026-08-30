@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod destination;
 mod diagnostic;
+mod install;
 mod protocol;
 mod render_book;
 mod rewrite_links;
@@ -14,6 +15,7 @@ pub use diagnostic::{
     AliasCandidateFact, AppDiagnostic, AppDiagnosticCategory, AppDiagnosticKind,
     ChapterDiagnosticFact, MdBookPathHazardFact, RouteCollisionGroup,
 };
+pub use install::{InstallReport, InstallState, install_assets};
 pub use render_book::{render_book, rewrite_book_links};
 pub use rewrite_links::rewrite_chapter_links;
 pub use routes::{
