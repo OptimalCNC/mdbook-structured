@@ -163,6 +163,25 @@ fn structured_parse_yaml_preserves_inline_crlf_source() {
 }
 
 #[test]
+fn structured_parse_yaml_explicit_empty_documents_project_null_root() {
+    let cases = ["---\n", "---\n...\n", "# comment\n---\n"];
+
+    for source in cases {
+        let document = parse_document(
+            StructuredFormat::Yaml,
+            source,
+            Path::new("explicit-empty.yaml"),
+            Limits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(document.loaded_source(), source);
+        assert!(matches!(document.root().value(), NodeValue::Null));
+        assert_stats(document.stats(), (1, 1));
+    }
+}
+
+#[test]
 fn failure_malformed_json_has_exact_parse_facts() {
     assert_failure(
         StructuredFormat::Json,

@@ -50,6 +50,7 @@ struct YamlPreflight {
     container_paths: Vec<StructuredPath>,
     next_slot: ExpectedSlot,
     document_count: usize,
+    document_has_event_root: bool,
 }
 
 impl FormatAdapter for YamlAdapter {
@@ -114,6 +115,7 @@ impl YamlPreflight {
             container_paths: Vec::new(),
             next_slot: ExpectedSlot::Root,
             document_count: 0,
+            document_has_event_root: false,
         };
 
         for result in parse_events(loaded_source) {
@@ -164,9 +166,21 @@ impl YamlPreflight {
                         "YAML directive metadata has no lossless public projection".to_owned(),
                     ));
                 }
+                self.document_has_event_root = false;
                 Ok(())
             }
-            Event::DocumentEnd { .. } => Ok(()),
+            Event::DocumentEnd { .. } => {
+                if !self.document_has_event_root {
+                    self.budget.enter_node(
+                        NonZeroUsize::MIN,
+                        source_name,
+                        None,
+                        &StructuredPath::root(),
+                    )?;
+                    self.document_has_event_root = true;
+                }
+                Ok(())
+            }
             Event::Alias { .. } => {
                 let path = self.path_for_next_slot();
                 Err(lossless_at_span(
@@ -300,7 +314,10 @@ impl YamlPreflight {
     ) -> Result<(NonZeroUsize, StructuredPath), Diagnostic> {
         let slot = std::mem::replace(&mut self.next_slot, ExpectedSlot::Root);
         let (depth, path) = match slot {
-            ExpectedSlot::Root => (NonZeroUsize::MIN, StructuredPath::root()),
+            ExpectedSlot::Root => {
+                self.document_has_event_root = true;
+                (NonZeroUsize::MIN, StructuredPath::root())
+            }
             ExpectedSlot::SequenceItem {
                 parent_depth,
                 index,
