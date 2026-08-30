@@ -157,6 +157,93 @@ fn inline_preserves_percent_triplet_that_decodes_to_a_path_separator() {
 }
 
 #[test]
+fn inline_regression_normalizes_percent_encoded_dot_segments() {
+    let cases = [
+        (
+            "[parent](%2E%2E/config/runtime.yaml)\n",
+            "%2E%2E/config/runtime.yaml",
+            "../config/runtime.yaml.html",
+        ),
+        (
+            "[current](../%2E/config/runtime.yaml)\n",
+            "../%2E/config/runtime.yaml",
+            "../config/runtime.yaml.html",
+        ),
+    ];
+
+    for (markdown, authored, replacement) in cases {
+        let rewritten =
+            rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+        assert_destination_edits(markdown, &rewritten, &[(authored, replacement)]);
+    }
+}
+
+#[test]
+fn inline_regression_preserves_numeric_entity_query_delimiter() {
+    let markdown = "[runtime](../config/runtime.yaml&#63;mode=raw)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml&#63;mode=raw",
+            "../config/runtime.yaml.html&#63;mode=raw",
+        )],
+    );
+}
+
+#[test]
+fn inline_regression_preserves_named_entity_query_delimiter() {
+    let markdown = "[runtime](../config/runtime.yaml&quest;mode=raw)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml&quest;mode=raw",
+            "../config/runtime.yaml.html&quest;mode=raw",
+        )],
+    );
+}
+
+#[test]
+fn inline_regression_preserves_numeric_entity_fragment_delimiter() {
+    let markdown = "[runtime](../config/runtime.yaml&#35;runtime)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml&#35;runtime",
+            "../config/runtime.yaml.html&#35;runtime",
+        )],
+    );
+}
+
+#[test]
+fn inline_regression_preserves_named_entity_fragment_delimiter() {
+    let markdown = "[runtime](../config/runtime.yaml&num;runtime)\n";
+
+    let rewritten = rewrite_chapter_links(&path("guide/setup.md"), markdown, &routes()).unwrap();
+
+    assert_destination_edits(
+        markdown,
+        &rewritten,
+        &[(
+            "../config/runtime.yaml&num;runtime",
+            "../config/runtime.yaml.html&num;runtime",
+        )],
+    );
+}
+
+#[test]
 fn inline_preserves_authored_entities_in_query_and_fragment_bytes() {
     let markdown = "[entity](../config/runtime.yaml?x=&amp;#frag&amp;)\n";
 

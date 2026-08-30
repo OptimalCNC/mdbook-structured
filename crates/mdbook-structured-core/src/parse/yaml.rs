@@ -18,6 +18,65 @@ use super::coordinates::location_from_byte_offset;
 
 pub(super) struct YamlAdapter;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct YamlParserSourceLength(u32);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct YamlParserCapacityExceeded {
+    source_len: usize,
+    capacity: u32,
+}
+
+impl YamlParserSourceLength {
+    fn try_from_len(source_len: usize) -> Result<Self, YamlParserCapacityExceeded> {
+        let length = u32::try_from(source_len).map_err(|_| YamlParserCapacityExceeded {
+            source_len,
+            capacity: u32::MAX,
+        })?;
+        Ok(Self(length))
+    }
+
+    #[cfg(test)]
+    fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl YamlParserCapacityExceeded {
+    fn into_diagnostic(self, source_name: &Path) -> Diagnostic {
+        Diagnostic::from_parts(
+            DiagnosticCategory::InputByteLimit,
+            source_name.to_owned(),
+            None,
+            None,
+            format!(
+                "input byte count {} exceeds the YAML parser span capacity {}",
+                self.source_len, self.capacity,
+            ),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct YamlParserSource<'a> {
+    loaded_source: &'a str,
+    _length: YamlParserSourceLength,
+}
+
+impl<'a> YamlParserSource<'a> {
+    fn try_new(loaded_source: &'a str, source_name: &Path) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            loaded_source,
+            _length: YamlParserSourceLength::try_from_len(loaded_source.len())
+                .map_err(|error| error.into_diagnostic(source_name))?,
+        })
+    }
+
+    fn as_str(self) -> &'a str {
+        self.loaded_source
+    }
+}
+
 enum ExpectedSlot {
     Root,
     SequenceItem {
@@ -60,11 +119,12 @@ impl FormatAdapter for YamlAdapter {
         source_name: &Path,
         limits: Limits,
     ) -> Result<StructuredDocument, Diagnostic> {
-        let preflight = YamlPreflight::run(loaded_source, source_name, limits)?;
+        let parser_source = YamlParserSource::try_new(loaded_source, source_name)?;
+        let preflight = YamlPreflight::run(parser_source, source_name, limits)?;
         let documents = LoaderBuilder::new()
             .lossless()
             .build()
-            .load(loaded_source)
+            .load(parser_source.as_str())
             .map_err(|error| loader_error(error, loaded_source, source_name))?;
 
         if documents.len() != 1 {
@@ -108,7 +168,12 @@ impl FormatAdapter for YamlAdapter {
 }
 
 impl YamlPreflight {
-    fn run(loaded_source: &str, source_name: &Path, limits: Limits) -> Result<Budget, Diagnostic> {
+    fn run(
+        parser_source: YamlParserSource<'_>,
+        source_name: &Path,
+        limits: Limits,
+    ) -> Result<Budget, Diagnostic> {
+        let loaded_source = parser_source.as_str();
         let mut preflight = Self {
             budget: Budget::new(limits),
             stack: Vec::new(),
@@ -743,4 +808,44 @@ fn invalid_provenance(
         path,
         format!("parser provenance is invalid: {error:?}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::DiagnosticCategory;
+
+    use super::{YamlParserCapacityExceeded, YamlParserSourceLength};
+
+    #[test]
+    fn yaml_parser_capacity_accepts_u32_max_source_length() {
+        let length = YamlParserSourceLength::try_from_len(u32::MAX as usize).unwrap();
+
+        assert_eq!(length.get(), u32::MAX);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn yaml_parser_capacity_rejects_first_unrepresentable_source_length() {
+        let source_name = Path::new("capacity.yaml");
+        let first_unrepresentable = u32::MAX as usize + 1;
+
+        let error = YamlParserSourceLength::try_from_len(first_unrepresentable).unwrap_err();
+
+        assert_eq!(
+            error,
+            YamlParserCapacityExceeded {
+                source_len: first_unrepresentable,
+                capacity: u32::MAX,
+            },
+        );
+
+        let error = error.into_diagnostic(source_name);
+
+        assert_eq!(error.category(), DiagnosticCategory::InputByteLimit);
+        assert_eq!(error.source_name(), source_name);
+        assert_eq!(error.location(), None);
+        assert_eq!(error.structured_path(), None);
+    }
 }

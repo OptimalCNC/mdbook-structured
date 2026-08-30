@@ -5,7 +5,7 @@ use std::path::Path;
 use mdbook_markdown::pulldown_cmark::{Event, LinkType, Tag};
 use mdbook_markdown::{MarkdownOptions, new_cmark_parser};
 
-use crate::destination::{AuthoredDestination, LocalDestination};
+use crate::destination::{AuthoredDestination, LocalDestination, ParserConfirmedDestination};
 use crate::{
     AliasCandidateFact, AppDiagnostic, AppDiagnosticKind, ChapterTarget, LinkResolution,
     LinkRouteMap, LogicalChapterPath, MdBookPathHazardFact,
@@ -74,13 +74,12 @@ pub fn rewrite_chapter_links(
                 let raw_destination = markdown
                     .get(scanned.range.clone())
                     .ok_or_else(protocol_error)?;
-                if let Some(edit) = build_edit(
-                    current_path,
-                    scanned.range,
-                    dest_url.as_ref(),
+                let authored = parser_confirmed_destination(
                     raw_destination,
-                    routes,
-                )? {
+                    dest_url.as_ref(),
+                    scanned.angle_wrapped,
+                )?;
+                if let Some(edit) = build_edit(current_path, scanned.range, authored, routes)? {
                     edits.push(edit);
                 }
             }
@@ -114,14 +113,12 @@ pub fn rewrite_chapter_links(
         let raw_destination = markdown
             .get(scanned.range.clone())
             .ok_or_else(protocol_error)?;
-        let Some(edit) = build_edit(
-            current_path,
-            scanned.range,
-            &definition.destination,
+        let authored = parser_confirmed_destination(
             raw_destination,
-            routes,
-        )?
-        else {
+            &definition.destination,
+            scanned.angle_wrapped,
+        )?;
+        let Some(edit) = build_edit(current_path, scanned.range, authored, routes)? else {
             continue;
         };
 
@@ -173,8 +170,7 @@ fn definition_key(span: &Range<usize>) -> DefinitionKey {
 fn build_edit(
     current_path: &LogicalChapterPath,
     range: Range<usize>,
-    authored: &str,
-    raw_authored: &str,
+    authored: ParserConfirmedDestination<'_>,
     routes: &LinkRouteMap,
 ) -> Result<Option<DestinationEdit>, AppDiagnostic> {
     let AuthoredDestination::Local(destination) =
@@ -190,8 +186,8 @@ fn build_edit(
         }
         LinkResolution::Missing => return Ok(None),
     };
-    let replacement = rewritten_destination(current_path, &destination, raw_authored, target)?;
-    if replacement == authored {
+    let replacement = rewritten_destination(current_path, &destination, target)?;
+    if replacement == destination.raw_authored() {
         return Ok(None);
     }
     if replacement.contains(".md") {
@@ -244,7 +240,6 @@ fn ambiguous_alias(
 fn rewritten_destination(
     current_path: &LogicalChapterPath,
     destination: &LocalDestination<'_>,
-    raw_authored: &str,
     target: &ChapterTarget,
 ) -> Result<String, AppDiagnostic> {
     let current_parent = current_path
@@ -253,37 +248,15 @@ fn rewritten_destination(
         .unwrap_or_else(|| Path::new(""));
     let output_path = target.output_route().as_path();
     let relative = relative_path(current_parent, output_path);
-    let mut rewritten = preserve_percent_spelling(
-        current_path,
-        destination.raw_path(),
-        destination.lookup(),
-        output_path,
-        &relative,
-    )?;
-    let (_, raw_query, raw_fragment) = split_raw_destination(raw_authored);
-    if raw_query.is_some() != destination.raw_query().is_some()
-        || raw_fragment.is_some() != destination.raw_fragment().is_some()
-    {
-        return Err(protocol_error());
-    }
-    if let Some(query) = raw_query {
+    let mut rewritten =
+        preserve_authored_path_spelling(current_path, destination, output_path, &relative)?;
+    if let Some(query) = destination.raw_query() {
         rewritten.push_str(query);
     }
-    if let Some(fragment) = raw_fragment {
+    if let Some(fragment) = destination.raw_fragment() {
         rewritten.push_str(fragment);
     }
     Ok(rewritten)
-}
-
-fn split_raw_destination(authored: &str) -> (&str, Option<&str>, Option<&str>) {
-    let fragment_start = authored.find('#').unwrap_or(authored.len());
-    let before_fragment = &authored[..fragment_start];
-    let query_start = before_fragment.find('?').unwrap_or(before_fragment.len());
-    (
-        &before_fragment[..query_start],
-        (query_start < before_fragment.len()).then_some(&authored[query_start..fragment_start]),
-        (fragment_start < authored.len()).then_some(&authored[fragment_start..]),
-    )
 }
 
 fn relative_path(from: &Path, to: &Path) -> String {
@@ -304,39 +277,17 @@ fn relative_path(from: &Path, to: &Path) -> String {
     components.join("/")
 }
 
-fn preserve_percent_spelling(
+fn preserve_authored_path_spelling(
     current_path: &LogicalChapterPath,
-    raw_path: &str,
-    lookup: &LogicalChapterPath,
+    destination: &LocalDestination<'_>,
     output_path: &Path,
     relative: &str,
 ) -> Result<String, AppDiagnostic> {
-    if !raw_path.contains('%') {
-        return Ok(relative.to_owned());
-    }
-
-    let mut raw_segments: Vec<_> = current_path
-        .as_path()
-        .parent()
-        .into_iter()
-        .flat_map(|parent| parent.iter())
-        .map(|segment| segment.to_string_lossy().into_owned())
-        .collect();
-    for segment in raw_path.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                raw_segments.pop();
-            }
-            segment => raw_segments.push(segment.to_owned()),
-        }
-    }
-
-    let normalized_raw = raw_segments.join("/");
-    let lookup_slash = slash_form(lookup.as_path());
+    let lookup_slash = slash_form(destination.lookup().as_path());
     let output_slash = slash_form(output_path);
     let preserved_prefix_len = common_utf8_prefix_len(&lookup_slash, &output_slash);
-    let preserved_raw_end = raw_offset_for_decoded_prefix(&normalized_raw, preserved_prefix_len)
+    let preserved_authored_end = destination
+        .authored_offset_for_decoded_prefix(preserved_prefix_len)
         .ok_or_else(protocol_error)?;
 
     let relative_segments: Vec<_> = relative.split('/').collect();
@@ -347,12 +298,12 @@ fn preserve_percent_spelling(
     let output_start = common_prefix_len(current_path.as_path().parent(), output_path);
     let relative_output_start = decoded_component_prefix_len(output_path, output_start);
     let encoded_suffix = if relative_output_start <= preserved_prefix_len {
-        let raw_output_start =
-            raw_offset_for_decoded_prefix(&normalized_raw, relative_output_start)
-                .ok_or_else(protocol_error)?;
+        let authored_output_start = destination
+            .authored_offset_for_decoded_prefix(relative_output_start)
+            .ok_or_else(protocol_error)?;
         format!(
             "{}{}",
-            &normalized_raw[raw_output_start..preserved_raw_end],
+            &destination.normalized_authored_path()[authored_output_start..preserved_authored_end],
             &output_slash[preserved_prefix_len..],
         )
     } else {
@@ -377,39 +328,11 @@ fn common_utf8_prefix_len(left: &str, right: &str) -> usize {
         .sum()
 }
 
-fn raw_offset_for_decoded_prefix(raw: &str, decoded_prefix_len: usize) -> Option<usize> {
-    let bytes = raw.as_bytes();
-    let mut raw_offset = 0;
-    let mut decoded_len = 0;
-
-    while decoded_len < decoded_prefix_len {
-        if bytes.get(raw_offset) == Some(&b'%') {
-            hex_value(*bytes.get(raw_offset + 1)?)?;
-            hex_value(*bytes.get(raw_offset + 2)?)?;
-            raw_offset += 3;
-        } else {
-            raw_offset += 1;
-        }
-        decoded_len += 1;
-    }
-
-    (decoded_len == decoded_prefix_len && raw.is_char_boundary(raw_offset)).then_some(raw_offset)
-}
-
 fn decoded_component_prefix_len(path: &Path, component_count: usize) -> usize {
     path.iter()
         .take(component_count)
         .map(|component| component.to_string_lossy().len() + 1)
         .sum()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn common_prefix_len(left: Option<&Path>, right: &Path) -> usize {
@@ -418,6 +341,94 @@ fn common_prefix_len(left: Option<&Path>, right: &Path) -> usize {
         .zip(right.iter())
         .take_while(|(left, right)| left == right)
         .count()
+}
+
+fn parser_confirmed_destination<'a>(
+    raw_authored: &'a str,
+    decoded_authored: &'a str,
+    angle_wrapped: bool,
+) -> Result<ParserConfirmedDestination<'a>, AppDiagnostic> {
+    let fragment_start = decoded_authored.find('#').unwrap_or(decoded_authored.len());
+    let query_start = decoded_authored[..fragment_start]
+        .find('?')
+        .unwrap_or(fragment_start);
+    let has_query = query_start < fragment_start;
+    let has_fragment = fragment_start < decoded_authored.len();
+
+    let raw_path_end =
+        raw_offset_for_decoded_boundary(raw_authored, decoded_authored, query_start, angle_wrapped)
+            .ok_or_else(protocol_error)?;
+    let raw_fragment_start = if has_fragment {
+        raw_offset_for_decoded_boundary(
+            raw_authored,
+            decoded_authored,
+            fragment_start,
+            angle_wrapped,
+        )
+        .ok_or_else(protocol_error)?
+    } else {
+        raw_authored.len()
+    };
+    if raw_path_end > raw_fragment_start {
+        return Err(protocol_error());
+    }
+
+    let raw_query = if has_query {
+        Some(
+            raw_authored
+                .get(raw_path_end..raw_fragment_start)
+                .ok_or_else(protocol_error)?,
+        )
+    } else {
+        None
+    };
+    let raw_fragment = if has_fragment {
+        Some(
+            raw_authored
+                .get(raw_fragment_start..)
+                .ok_or_else(protocol_error)?,
+        )
+    } else {
+        None
+    };
+
+    Ok(ParserConfirmedDestination::new(
+        &decoded_authored[..query_start],
+        raw_authored,
+        raw_query,
+        raw_fragment,
+    ))
+}
+
+fn raw_offset_for_decoded_boundary(
+    raw_authored: &str,
+    decoded_authored: &str,
+    decoded_boundary: usize,
+    angle_wrapped: bool,
+) -> Option<usize> {
+    if decoded_boundary == 0 {
+        return Some(0);
+    }
+    if decoded_boundary == decoded_authored.len() {
+        return Some(raw_authored.len());
+    }
+    let decoded_prefix = decoded_authored.get(..decoded_boundary)?;
+    let decoded_suffix = decoded_authored.get(decoded_boundary..)?;
+    let mut matches = raw_authored
+        .char_indices()
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(raw_authored.len()))
+        .filter(|&offset| {
+            offset >= decoded_prefix.len() && raw_authored.len() - offset >= decoded_suffix.len()
+        })
+        .filter(|&offset| {
+            decode_scanned_destination(&raw_authored[..offset], angle_wrapped).as_deref()
+                == Some(decoded_prefix)
+                && decode_scanned_destination(&raw_authored[offset..], angle_wrapped).as_deref()
+                    == Some(decoded_suffix)
+        });
+    let matched = matches.next()?;
+    matches.next().is_none().then_some(matched)
 }
 
 fn scan_inline_destination(
