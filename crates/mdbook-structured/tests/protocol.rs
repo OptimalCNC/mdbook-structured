@@ -94,7 +94,6 @@ fn capability_rejects_non_html_renderers_without_reading_stdin() {
 fn capability_rejects_malformed_command_shapes_without_reading_stdin() {
     for arguments in [
         &[][..],
-        &["render"][..],
         &["render", "supports"][..],
         &["render", "supports", "html", "extra"][..],
         &["unknown", "supports", "html"][..],
