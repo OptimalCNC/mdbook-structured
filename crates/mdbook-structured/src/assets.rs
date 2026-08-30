@@ -1,7 +1,15 @@
 #[allow(dead_code)]
+#[allow(
+    clippy::redundant_static_lifetimes,
+    reason = "the explicit lifetime is required by the plan-mandated crate-private signature"
+)]
 pub(crate) const STRUCTURED_CSS: &'static [u8] = include_bytes!("../assets/mdbook-structured.css");
 
 #[allow(dead_code)]
+#[allow(
+    clippy::redundant_static_lifetimes,
+    reason = "the explicit lifetime is required by the plan-mandated crate-private signature"
+)]
 pub(crate) const STRUCTURED_JS: &'static [u8] = include_bytes!("../assets/mdbook-structured.js");
 
 #[cfg(test)]

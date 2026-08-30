@@ -53,7 +53,7 @@ fn structured_parse_representative_json_and_yaml_preserve_public_model() {
             ["", "enabled", "text", "amount", "items"]
         );
         assert_eq!(string_at(&document, &[key("")]), "");
-        assert_eq!(boolean_at(&document, &[key("enabled")]), true);
+        assert!(boolean_at(&document, &[key("enabled")]));
         assert_eq!(string_at(&document, &[key("text")]), "true");
         assert_eq!(
             number_at(&document, &[key("amount")]).as_str(),
@@ -74,13 +74,10 @@ fn structured_parse_representative_json_and_yaml_preserve_public_model() {
             ),
             "x"
         );
-        assert_eq!(
-            boolean_at(
-                &document,
-                &[key("items"), PathSegment::Index(1), key("flag")]
-            ),
-            false
-        );
+        assert!(!boolean_at(
+            &document,
+            &[key("items"), PathSegment::Index(1), key("flag")]
+        ));
         assert_eq!(
             string_at(
                 &document,
