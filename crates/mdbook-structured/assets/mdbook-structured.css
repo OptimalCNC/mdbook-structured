@@ -1,0 +1,179 @@
+.structured-document {
+  --structured-string: var(--links, #0969da);
+  --structured-number: var(--links, #8250df);
+  --structured-boolean: var(--fg, #953800);
+  --structured-null: var(--fg, #6e7781);
+  --structured-border: var(--sidebar-bg, #d0d7de);
+  --structured-hover: var(--theme-hover, rgba(127, 127, 127, 0.12));
+  --structured-focus: var(--links, #0969da);
+  color: var(--fg, #24292f);
+  background: var(--bg, #ffffff);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.45;
+  max-inline-size: 100%;
+}
+
+.structured-document > h1 {
+  font-family: inherit;
+  overflow-wrap: anywhere;
+}
+
+.structured-document [data-structured-action] {
+  background: var(--sidebar-bg, #f6f8fa);
+  border: 1px solid var(--structured-border);
+  border-radius: 0.25rem;
+  color: var(--fg, #24292f);
+  cursor: pointer;
+  display: inline-block;
+  font: inherit;
+  margin: 0 0.5rem 0.75rem 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  padding: 0.25rem 0.6rem;
+  white-space: normal;
+}
+
+.structured-document [data-structured-action]:hover {
+  background: var(--theme-hover, var(--structured-hover));
+}
+
+.structured-document [data-structured-action]:focus-visible,
+.structured-document details[data-structured-container] > summary:focus-visible,
+.structured-document details[data-structured-original-source] > summary:focus-visible {
+  outline: 2px solid var(--links, var(--structured-focus));
+  outline-offset: 2px;
+}
+
+.structured-document details[data-structured-container] {
+  display: block;
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.structured-document details[data-structured-container][data-structured-node="mapping"],
+.structured-document details[data-structured-container][data-structured-node="sequence"] {
+  padding-block: 0.12rem;
+}
+
+.structured-document details[data-structured-container] > summary {
+  border-radius: 0.2rem;
+  cursor: pointer;
+  list-style-position: outside;
+  padding: 0.15rem 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.structured-document details[data-structured-container] > summary:hover {
+  background: var(--theme-hover, var(--structured-hover));
+}
+
+.structured-document details[data-structured-container] > summary::marker {
+  color: var(--links, var(--structured-focus));
+}
+
+.structured-document details[data-structured-container] > [data-structured-node] {
+  padding-inline-start: 1.25rem;
+}
+
+.structured-document [data-structured-node="string"],
+.structured-document [data-structured-node="number"],
+.structured-document [data-structured-node="boolean"],
+.structured-document [data-structured-node="null"] {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  min-inline-size: 0;
+  padding-block: 0.12rem;
+}
+
+.structured-document [data-structured-label] {
+  flex: 0 1 24ch;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.structured-document [data-structured-label="key"] {
+  color: var(--fg, #24292f);
+}
+
+.structured-document [data-structured-label="index"] {
+  color: var(--fg, #57606a);
+}
+
+.structured-document [data-structured-value] {
+  flex: 1 1 20ch;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.structured-document [data-structured-node="string"] > [data-structured-value] {
+  color: var(--structured-string);
+}
+
+.structured-document [data-structured-node="number"] > [data-structured-value] {
+  color: var(--structured-number);
+}
+
+.structured-document [data-structured-node="boolean"] > [data-structured-value] {
+  color: var(--structured-boolean);
+}
+
+.structured-document [data-structured-node="null"] > [data-structured-value] {
+  color: var(--structured-null);
+}
+
+.structured-document [data-structured-empty="key"]::after,
+.structured-document [data-structured-empty="string"]::after {
+  color: var(--fg, #57606a);
+  content: " (empty)";
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.structured-document details[data-structured-original-source] {
+  border-block-start: 1px solid var(--structured-border);
+  margin-block-start: 1rem;
+  padding-block-start: 0.75rem;
+}
+
+.structured-document details[data-structured-original-source] > summary {
+  color: var(--links, var(--structured-focus));
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.structured-document details[data-structured-original-source] > summary:hover {
+  background: var(--theme-hover, var(--structured-hover));
+}
+
+.structured-document details[data-structured-original-source] pre {
+  background: var(--sidebar-bg, #f6f8fa);
+  border-inline-start: 3px solid var(--structured-border);
+  box-sizing: border-box;
+  margin: 0.75rem 0 0;
+  max-inline-size: 100%;
+  padding: 0.75rem;
+}
+
+.structured-document details[data-structured-original-source] code[data-structured-format] {
+  display: block;
+  font: inherit;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 44rem) {
+  .structured-document [data-structured-action] {
+    display: block;
+    margin-inline-end: 0;
+    width: 100%;
+  }
+
+  .structured-document [data-structured-label],
+  .structured-document [data-structured-value] {
+    flex-basis: 100%;
+  }
+}
