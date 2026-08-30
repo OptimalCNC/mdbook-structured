@@ -15,7 +15,9 @@
       root
         .querySelectorAll("details[data-structured-container]")
         .forEach((container) => {
-          container.open = isExpanded;
+          if (container.closest(".structured-document") === root) {
+            container.open = isExpanded;
+          }
         });
     });
   });
