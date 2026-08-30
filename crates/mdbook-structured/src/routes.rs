@@ -71,6 +71,113 @@ impl OutputRoute {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChapterTarget {
+    source_path: Option<LogicalChapterPath>,
+    output_route: OutputRoute,
+}
+
+impl ChapterTarget {
+    pub fn source_path(&self) -> Option<&LogicalChapterPath> {
+        self.source_path.as_ref()
+    }
+
+    pub fn output_route(&self) -> &OutputRoute {
+        &self.output_route
+    }
+}
+
+pub struct LinkRouteMap {
+    exact: BTreeMap<LogicalChapterPath, ChapterTarget>,
+    aliases: BTreeMap<LogicalChapterPath, Vec<ChapterTarget>>,
+}
+
+pub enum LinkResolution<'a> {
+    Exact(&'a ChapterTarget),
+    UniqueAlias(&'a ChapterTarget),
+    Ambiguous(&'a [ChapterTarget]),
+    Missing,
+}
+
+impl LinkRouteMap {
+    pub fn from_book(book: &Book) -> Result<Self, AppDiagnostic> {
+        let mut exact = BTreeMap::new();
+        let mut pending_aliases = Vec::new();
+
+        for chapter in book.chapters() {
+            let logical_path = chapter
+                .path
+                .as_deref()
+                .ok_or_else(|| invalid_logical_path(Path::new("")))?;
+            let logical_path = LogicalChapterPath::try_from_path(logical_path)?;
+            let source_path = chapter
+                .source_path
+                .as_deref()
+                .map(LogicalChapterPath::try_from_path)
+                .transpose()?;
+            let output_route =
+                OutputRoute::from_projected_path(logical_path.as_path().with_extension("html"));
+            let target = ChapterTarget {
+                source_path: source_path.clone(),
+                output_route,
+            };
+
+            if let Some(source_path) = &source_path {
+                exact.insert(source_path.clone(), target.clone());
+            }
+
+            let index_alias_path = source_path
+                .as_ref()
+                .and_then(|source_path| readme_index_alias_path(source_path, &logical_path));
+            let is_render_generated_shim = source_path.as_ref().is_some_and(|source_path| {
+                is_render_generated_structured_shim(source_path, &logical_path)
+            });
+
+            if source_path.is_none() || (index_alias_path.is_none() && !is_render_generated_shim) {
+                exact.insert(logical_path, target.clone());
+            }
+
+            if let (Some(source_path), Some(index_alias_path)) = (source_path, index_alias_path) {
+                pending_aliases.push((source_path, index_alias_path, target));
+            }
+        }
+
+        let mut aliases = BTreeMap::<LogicalChapterPath, Vec<ChapterTarget>>::new();
+        for (_source_path, index_alias_path, target) in pending_aliases {
+            aliases
+                .entry(index_alias_path.clone())
+                .or_default()
+                .push(target.clone());
+            if let Some(parent) = index_alias_path
+                .as_path()
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                aliases
+                    .entry(LogicalChapterPath::try_from_path(parent)?)
+                    .or_default()
+                    .push(target);
+            }
+        }
+
+        Ok(Self { exact, aliases })
+    }
+
+    pub fn resolve(&self, path: &LogicalChapterPath) -> LinkResolution<'_> {
+        if let Some(target) = self.exact.get(path) {
+            return LinkResolution::Exact(target);
+        }
+
+        match self.aliases.get(path) {
+            Some(candidates) if candidates.len() == 1 => {
+                LinkResolution::UniqueAlias(&candidates[0])
+            }
+            Some(candidates) => LinkResolution::Ambiguous(candidates),
+            None => LinkResolution::Missing,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructuredExtension {
     Json,
@@ -95,6 +202,47 @@ impl StructuredExtension {
             Self::Yml => "yml",
         }
     }
+}
+
+fn is_render_generated_structured_shim(
+    source_path: &LogicalChapterPath,
+    logical_path: &LogicalChapterPath,
+) -> bool {
+    let Some(extension) = StructuredExtension::from_path(source_path.as_path()) else {
+        return false;
+    };
+    let mut projected_path = source_path.as_path().to_owned();
+    projected_path.set_extension(format!("{}.md", extension.as_str()));
+    logical_path.as_path() == projected_path
+}
+
+fn readme_index_alias_path(
+    source_path: &LogicalChapterPath,
+    logical_path: &LogicalChapterPath,
+) -> Option<LogicalChapterPath> {
+    let stem = source_path.as_path().file_stem()?.to_str()?;
+    if !stem.eq_ignore_ascii_case("readme") {
+        return None;
+    }
+
+    let index_alias_path = LogicalChapterPath::try_from_path(
+        &source_path
+            .as_path()
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("index.md"),
+    )
+    .ok()?;
+    let expected_logical_path = match StructuredExtension::from_path(source_path.as_path()) {
+        Some(extension) => {
+            let mut projected_path = index_alias_path.as_path().to_owned();
+            projected_path.set_extension(format!("{}.md", extension.as_str()));
+            projected_path
+        }
+        None => index_alias_path.as_path().to_owned(),
+    };
+
+    (logical_path.as_path() == expected_logical_path).then_some(index_alias_path)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

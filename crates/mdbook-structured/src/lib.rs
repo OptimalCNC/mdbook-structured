@@ -6,6 +6,7 @@ pub use diagnostic::{
     ChapterDiagnosticFact, MdBookPathHazardFact, RouteCollisionGroup,
 };
 pub use routes::{
-    ChapterOrdinal, LogicalChapterPath, OutputRoute, ProjectedChapter, RenderRoutePlan,
-    StructuredExtension, StructuredSource, preflight_render_routes,
+    ChapterOrdinal, ChapterTarget, LinkResolution, LinkRouteMap, LogicalChapterPath, OutputRoute,
+    ProjectedChapter, RenderRoutePlan, StructuredExtension, StructuredSource,
+    preflight_render_routes,
 };
