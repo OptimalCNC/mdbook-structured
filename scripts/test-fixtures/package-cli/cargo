@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case ${FAKE_CARGO_MODE:-} in
+  version-mismatch)
+    if [[ ${1:-} == package ]]; then
+      printf '%s\n' \
+        'error: failed to select a version for the requirement `mdbook-structured-core = "^0.1.1"`' \
+        'candidate versions found which did not match: 0.1.0' \
+        'location searched: crates.io index' >&2
+      exit 101
+    fi
+    ;;
+  unexpected)
+    if [[ ${1:-} == package ]]; then
+      printf 'error: registry transport failed\n' >&2
+      exit 101
+    fi
+    ;;
+  *)
+    printf 'unexpected fake Cargo mode\n' >&2
+    exit 2
+    ;;
+esac
+
+if [[ ${1:-} != --config || -z ${2:-} || ${3:-} != package ]]; then
+  printf 'unexpected patched Cargo invocation\n' >&2
+  exit 2
+fi
+
+if ! grep -Fq '[patch.crates-io]' "$2" \
+  || ! grep -Fq 'mdbook-structured-core = { path = ' "$2"; then
+  printf 'missing local core patch\n' >&2
+  exit 2
+fi

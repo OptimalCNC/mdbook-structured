@@ -176,6 +176,18 @@ validate_release() {
   printf 'validated %s at %s\n' "$release_tag" "$tag_commit"
 }
 
+registry_core_version_unavailable() {
+  local package_log=$1
+
+  grep -Fq 'no matching package named `mdbook-structured-core` found' "$package_log" \
+    || {
+      grep -Fq 'failed to select a version for the requirement `mdbook-structured-core = "' \
+        "$package_log" \
+        && grep -Fq 'candidate versions found which did' "$package_log" \
+        && grep -Fq 'location searched: crates.io index' "$package_log"
+    }
+}
+
 package_cli() (
   set -euo pipefail
 
@@ -194,9 +206,9 @@ package_cli() (
     exit 0
   fi
 
-  # If the registry copy is not available yet, permit a local patch only for
-  # Cargo's exact missing-package diagnostic.
-  if ! grep -Fq 'no matching package named `mdbook-structured-core` found' "$package_log"; then
+  # If the exact registry version is not available yet, permit a local patch
+  # only for Cargo's missing-package or missing-version diagnostics.
+  if ! registry_core_version_unavailable "$package_log"; then
     printf 'cargo package failed for an unexpected reason\n' >&2
     exit 1
   fi

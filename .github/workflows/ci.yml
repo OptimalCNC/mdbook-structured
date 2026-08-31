@@ -39,8 +39,14 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+      - name: Install mdBook
+        run: cargo install mdbook --version 0.5.3 --locked
+
       - name: Run tests
         run: cargo test --workspace --locked
+
+      - name: Test release helpers
+        run: scripts/test-release-check.sh
 
       - name: Build Rust documentation
         run: cargo doc --workspace --all-features --locked --no-deps
@@ -50,34 +56,7 @@ jobs:
 
       - name: Package CLI crate
         shell: bash
-        run: |
-          set -euo pipefail
-
-          package_log="$(mktemp)"
-          trap 'rm -f "$package_log" "$package_config"' EXIT
-
-          # Keep the exact package command as the first attempt. Once the core
-          # crate is published, this succeeds and no local override is used.
-          package_config=""
-          if cargo package --locked -p mdbook-structured 2>&1 | tee "$package_log"; then
-            exit 0
-          fi
-
-          # Before the first publication, Cargo's package verification rewrites
-          # the path dependency to crates.io. Only that known missing-package
-          # error may use the local patch below; every other package failure is
-          # still fatal.
-          if ! grep -Fq 'no matching package named `mdbook-structured-core` found' "$package_log"; then
-            echo "cargo package failed for an unexpected reason" >&2
-            exit 1
-          fi
-
-          package_config="$(mktemp)"
-          printf '%s\n' \
-            '[patch.crates-io]' \
-            "mdbook-structured-core = { path = \"${GITHUB_WORKSPACE}/crates/mdbook-structured-core\" }" \
-            > "$package_config"
-          cargo --config "$package_config" package --locked -p mdbook-structured
+        run: scripts/release-check.sh package-cli
 
   msrv:
     name: Rust 1.88 MSRV

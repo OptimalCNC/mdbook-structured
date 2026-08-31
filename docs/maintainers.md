@@ -38,7 +38,7 @@ Configure Trusted Publishers for both crates with these exact fields:
 ```text
 owner:       OptimalCNC
 repository:  mdbook-structured
-workflow:    .github/workflows/release.yml
+workflow:    release.yml
 environment: crates-io
 ```
 
