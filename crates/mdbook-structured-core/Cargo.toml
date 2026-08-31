@@ -1,6 +1,7 @@
 [package]
 name = "mdbook-structured-core"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 version.workspace = true
 description = "Parser-neutral JSON and YAML structured documents with source provenance and HTML rendering."

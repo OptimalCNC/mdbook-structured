@@ -2,6 +2,7 @@
 name = "mdbook-structured"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "An mdBook preprocessor that renders listed JSON and YAML chapters as structured HTML pages."
 readme = "../../README.md"
