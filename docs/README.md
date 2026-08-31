@@ -1,52 +1,70 @@
-# mdbook-structured Design
+# Getting Started
 
-Status: Approved design for v1
+`mdbook-structured` is an external preprocessor for mdBook. Listed JSON and
+YAML chapters become structured HTML pages while mdBook retains its normal
+book structure, navigation, themes, search, and stock HTML renderer.
 
-Date: 2026-08-28
+## Prerequisites
 
-mdbook-structured is an external Rust mdBook preprocessor backed by a
-reusable, format-extensible library. The library exposes a parser-neutral
-model for JSON-compatible structured documents. It renders selected JSON and
-YAML source files as readable, styled pages in mdBook's stock HTML output.
-The source files remain authoritative on disk, and each generated page remains
-part of the ordinary mdBook book: navigation, themes, search, edit links, and
-the stock renderer continue to own their usual responsibilities.
+Install Cargo and mdBook 0.5.x, and start with a book containing a
+`SUMMARY.md`.
 
-The architecture is intentionally general, but the v1 input set is fixed to
-`.json`, `.yaml`, and `.yml`. A file is eligible only when mdBook has loaded it
-as a chapter listed in `SUMMARY.md`. The implementation does not enumerate the
-source tree to discover unlisted chapters.
+## Install
 
-V1 includes:
+```console
+cargo install mdbook-structured
+```
 
-- JSON and YAML parsing through selected parser libraries;
-- a parser-neutral `StructuredDocument` model with source provenance;
-- build-time semantic HTML rendering and progressive JavaScript enhancement;
-- book-wide Markdown link rewriting for registered structured chapters;
-- chapter-route collision preflight and fail-fast diagnostics;
-- an installer that generates starter CSS and JavaScript without editing
-  `book.toml`; and
-- tests that verify semantic behavior at the parser, renderer, preprocessor,
-  and installer seams.
+## Configure
 
-V1 does not include a custom mdBook backend, a fork of mdBook, JSON/YAML
-parsers in mdBook core, implicit file discovery, non-HTML renderer support,
-schema-aware or domain-specific views, generated JSON Pointer anchors,
-persistent expansion state, print-specific styling, automatic configuration
-file edits, or special presentation for non-displayable control characters.
+Add both preprocessors to your book's `book.toml`:
 
-The ownership split is:
+```toml
+[preprocessor.structured]
+command = "mdbook-structured render"
+after = ["index"]
+before = ["links"]
+renderers = ["html"]
+max-input-bytes = 1048576
+max-nodes = 10000
+max-depth = 64
+large-container-threshold = 100
 
-- mdBook core owns book structure, processing order, interpretation of final
-  chapter paths, URL generation, and rendering infrastructure;
-- mdbook-structured-core owns parser adapters, lossless model projection,
-  diagnostics, and structured-page rendering; and
-- mdbook-structured owns the mdBook subprocess protocol, chapter selection,
-  the structured logical-path shim, book-wide link mapping, and the install
-  command.
+[preprocessor.structured-links]
+command = "mdbook-structured rewrite-links"
+after = ["links"]
+renderers = ["html"]
+```
 
-This keeps the external seam small while allowing future format adapters and
-renderers to evolve without coupling their parser types to mdBook. The
-[authoring contract](design/authoring.md) starts from the book author's point
-of view; the [processing architecture](design/architecture.md) then explains
-how the components cooperate.
+## Install assets and build
+
+From your book root:
+
+```console
+cd path/to/book
+mdbook-structured install .
+mdbook build
+mdbook serve
+```
+
+The installer writes starter CSS and JavaScript only; it never edits
+`book.toml`. Append the generated paths to `additional-css` and
+`additional-js` as directed by the command.
+
+## Add structured chapters
+
+List a source file in `SUMMARY.md` and link to that source path, for example
+`[Runtime configuration](config/runtime.yaml)`. mdBook then publishes an
+extension-preserving page such as `config/runtime.yaml.html`.
+
+Only chapters listed in `SUMMARY.md` are transformed. Unlisted files remain
+ordinary files, and `mdbook test` is not a structured-book acceptance command
+in v1 because it uses a different renderer.
+
+## Further reading
+
+- [Configuration](configuration.md)
+- [Authoring](authoring.md)
+- [Self-contained example](../examples/self-contained/README.md)
+- [Design Reference](design/overview.md)
+- [Maintainer Guide](maintainers.md)

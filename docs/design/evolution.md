@@ -19,7 +19,7 @@ rather than a lossy adapter.
 JSON Pointer-generated anchors, schema-aware and domain-specific views,
 persistent expansion state, alternate backends, print-specific behavior, and
 deeper mdBook integration remain deferred. These exclusions preserve the
-[v1 boundary](../index.md) until implementation evidence establishes a need
+[v1 boundary](overview.md) until implementation evidence establishes a need
 to change it.
 
 ## Possible mdBook contributions
