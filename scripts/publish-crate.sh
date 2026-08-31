@@ -23,13 +23,38 @@ endpoint="https://crates.io/api/v1/crates/${crate}/${version}"
 user_agent='mdbook-structured-publish-helper/1.0'
 export CARGO_HTTP_USER_AGENT="$user_agent"
 
+response_file="$(mktemp)"
+cleanup_response() {
+  rm -f -- "$response_file"
+}
+trap cleanup_response EXIT
+
+validate_registry_record() {
+  if ! jq -e \
+    --arg expected_crate "$crate" \
+    --arg expected_version "$version" \
+    '(.version | type == "object")
+      and (.version.crate | type == "string")
+      and (.version.num | type == "string")
+      and (.version.yanked | type == "boolean")
+      and (.version.crate == $expected_crate)
+      and (.version.num == $expected_version)
+      and (.version.yanked == false)' \
+    "$response_file" >/dev/null; then
+    printf 'crates.io returned a mismatched, malformed, or yanked record for %s %s\n' \
+      "$crate" "$version" >&2
+    return 1
+  fi
+}
+
 query_version_status() {
   local status rc
 
+  : >"$response_file"
   if status=$(curl --silent --show-error --location \
     --connect-timeout 5 --max-time 10 \
     --user-agent "$user_agent" \
-    --output /dev/null --write-out '%{http_code}' \
+    --output "$response_file" --write-out '%{http_code}' \
     "$endpoint"); then
     if [[ ! $status =~ ^[0-9]{3}$ ]]; then
       printf 'crates.io returned an invalid HTTP status for %s %s: %s\n' \
@@ -116,6 +141,7 @@ fi
 
 case $initial_status in
   200)
+    validate_registry_record
     printf '%s %s is already published on crates.io.\n' "$crate" "$version"
     exit 0
     ;;
@@ -134,6 +160,7 @@ else
   publish_rc=$?
   if recheck_status=$(query_version_status); then
     if [[ $recheck_status == 200 ]]; then
+      validate_registry_record
       printf '%s %s became visible on crates.io after publish interruption.\n' \
         "$crate" "$version"
       exit 0
@@ -149,6 +176,7 @@ for ((attempt = 1; attempt <= 60; attempt++)); do
   if poll_status=$(query_version_status); then
     case $poll_status in
       200)
+        validate_registry_record
         visible=true
         break
         ;;

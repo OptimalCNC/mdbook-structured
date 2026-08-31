@@ -17,6 +17,7 @@ env:
 jobs:
   validate:
     name: Validate bootstrap tag
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,6 +80,7 @@ jobs:
 
   publish:
     name: Bootstrap crates.io packages
+    if: ${{ github.ref == 'refs/heads/main' }}
     needs: validate
     runs-on: ubuntu-latest
     environment:

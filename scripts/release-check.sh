@@ -49,6 +49,7 @@ validate_release() {
   local mode=${1:-}
   local release_tag release_version tag_commit checked_out_commit metadata package_text
   local core_version='' cli_version='' row package_name package_version
+  local dependency_info='' dependency_count='' dependency_req='' expected_dependency_req
   local -a package_rows
 
   case "$mode" in
@@ -133,6 +134,36 @@ validate_release() {
   if [[ "$core_version" != "$release_version" || "$cli_version" != "$release_version" ]]; then
     printf 'tag %s expects %s; package versions are core=%s cli=%s\n' \
       "$release_tag" "$release_version" "$core_version" "$cli_version" >&2
+    return 1
+  fi
+
+  # Cargo normalizes the workspace's plain `version = "x.y.z"` declaration to
+  # a caret requirement in metadata. Keep that registry requirement in lockstep
+  # with the release while preserving the manifest/packaging contract.
+  if ! dependency_info="$(jq -r '
+    [
+      .packages[]
+      | select(.name == "mdbook-structured")
+      | .dependencies[]?
+      | select(.name == "mdbook-structured-core")
+      | .req
+    ]
+    | [length, (if length == 1 then .[0] else "" end)]
+    | @tsv
+  ' <<<"$metadata")"; then
+    printf 'cargo metadata did not produce a readable CLI core dependency\n' >&2
+    return 1
+  fi
+  IFS=$'\t' read -r dependency_count dependency_req <<<"$dependency_info"
+  if [[ "$dependency_count" != 1 ]]; then
+    printf 'expected exactly one mdbook-structured-core dependency; found %s\n' \
+      "${dependency_count:-0}" >&2
+    return 1
+  fi
+  expected_dependency_req="^${release_version}"
+  if [[ "$dependency_req" != "$expected_dependency_req" ]]; then
+    printf 'tag %s expects CLI mdbook-structured-core requirement %s; found %s\n' \
+      "$release_tag" "$expected_dependency_req" "${dependency_req:-<missing>}" >&2
     return 1
   fi
 
