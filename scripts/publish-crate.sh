@@ -44,8 +44,58 @@ query_version_status() {
   fi
 }
 
+wait_for_index() {
+  local attempt search_output info_output line first second third registry_path
+  local version_seen registry_seen
+
+  for ((attempt = 1; attempt <= 12; attempt++)); do
+    search_output=''
+    if search_output=$(CARGO_TERM_COLOR=never cargo search "$crate" --limit 100 2>&1) \
+      && version_visible_in_search "$search_output"; then
+      printf '%s %s is published and indexed on crates.io.\n' "$crate" "$version"
+      return 0
+    fi
+
+    # Search normally reports only the latest release. The registry-scoped
+    # query also confirms historical versions without resolving a workspace path.
+    info_output=''
+    if info_output=$(CARGO_TERM_COLOR=never cargo info --registry crates-io "$crate@$version" 2>&1); then
+      version_seen=false
+      registry_seen=false
+      while IFS= read -r line; do
+        line=${line%$'\r'}
+        read -r first second third _ <<<"$line"
+        if [[ "$first" == 'version:' && "$second" == "$version" ]] \
+          || [[ "$first" == "$crate" && "$second" == "v$version" ]] \
+          || [[ "$first" == 'Downloaded' && "$second" == "$crate" && "$third" == "v$version" ]]; then
+          version_seen=true
+        fi
+        if [[ "$first" == 'crates.io:' ]]; then
+          registry_path=${second#https://crates.io/crates/}
+          if [[ "$registry_path" == "$crate/$version" ]]; then
+            registry_seen=true
+          fi
+        fi
+      done <<<"$info_output"
+      if [[ "$version_seen" == true && "$registry_seen" == true ]]; then
+        printf '%s %s is published and indexed on crates.io (cargo info).\n' \
+          "$crate" "$version"
+        return 0
+      fi
+    fi
+
+    if (( attempt < 12 )); then
+      sleep 5
+    fi
+  done
+
+  printf 'timed out waiting for %s %s in the crates.io index after 12 attempts; retry the release.\n' \
+    "$crate" "$version" >&2
+  return 1
+}
+
 version_visible_in_search() {
-  local line
+  local output=$1 line
 
   while IFS= read -r line; do
     if [[ $line =~ ^[[:space:]]*([^[:space:]]+)[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]] \
@@ -53,7 +103,7 @@ version_visible_in_search() {
       && [[ ${BASH_REMATCH[2]} == "$version" ]]; then
       return 0
     fi
-  done
+  done <<<"$output"
   return 1
 }
 
@@ -126,19 +176,4 @@ if [[ $visible != true ]]; then
   exit 1
 fi
 
-for ((attempt = 1; attempt <= 12; attempt++)); do
-  search_output=''
-  if search_output=$(cargo search "$crate" --limit 100 2>&1) \
-    && version_visible_in_search <<<"$search_output"; then
-    printf '%s %s is published and indexed on crates.io.\n' "$crate" "$version"
-    exit 0
-  fi
-
-  if (( attempt < 12 )); then
-    sleep 5
-  fi
-done
-
-printf 'timed out waiting for %s %s in cargo search after 12 attempts; retry the release.\n' \
-  "$crate" "$version" >&2
-exit 1
+wait_for_index
