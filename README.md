@@ -24,8 +24,22 @@ mdbook-structured install .
 mdbook build
 ```
 
-Register the two HTML-only preprocessors shown in the [Configuration guide](https://optimalcnc.github.io/mdbook-structured/configuration.html),
-then list JSON/YAML chapters in `SUMMARY.md`.
+Register the two HTML-only preprocessors in `book.toml`:
+
+```toml
+[preprocessor.structured]
+command = "mdbook-structured render"
+after = ["index"]
+before = ["links"]
+renderers = ["html"]
+
+[preprocessor.structured-links]
+command = "mdbook-structured rewrite-links"
+after = ["links"]
+renderers = ["html"]
+```
+
+Then list JSON/YAML chapters in `SUMMARY.md`. See the [Configuration guide](https://optimalcnc.github.io/mdbook-structured/configuration.html) for resource limits and asset registration.
 
 Supported scope is listed JSON/YAML chapters and the stock HTML renderer;
 `mdbook test` is not a structured-book acceptance command in v1.
