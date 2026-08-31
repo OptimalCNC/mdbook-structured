@@ -27,7 +27,16 @@ For each theme and viewport, record `Pass` or `Fail` after completing the checkl
 
 ## Checklist
 
-- Confirm compact key/value and container alignment without overlap.
+- Confirm that the directly rendered mixed root and its foldable/scalar
+  siblings share one decoded-label column; scalar rows retain the disclosure
+  gutter there, and native fold markers stay within the structured-document
+  area.
+- Open `service`, then verify its mixed `name` and `ports` rows remain aligned.
+  Expand `display` (all-scalar mapping) and `ports` (all-scalar sequence): omit
+  only their marker gutters while preserving structural nesting indentation
+  and one sibling label column. Check the all-scalar root on the
+  `config/index.yaml.html` page the same way, and confirm empty containers keep
+  their existing disclosure behavior.
 - Confirm hover feedback is restrained and keyboard focus is clearly visible.
 - Confirm container disclosures use native twisties.
 - Confirm the data starts directly with `service`, without a synthetic `Mapping` row; `service` starts open, while `ports`, `display`, and `large` start closed.

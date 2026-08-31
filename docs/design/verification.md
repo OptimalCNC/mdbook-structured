@@ -69,7 +69,14 @@ JavaScript is tested at the behavior seam. One browser-level smoke suite,
 following mdBook's selector-oriented browser tests, loads a built fixture and
 asserts visible node counts and text, initial disclosure state, expand-all and
 collapse-all behavior, active-page scoping, and the absence of persistent
-state after a fresh load. No screenshot or pixel baseline is required. CSS
+state after a fresh load. It also checks that scalar and foldable sibling rows
+share their rendered label column and that a native root marker does not escape
+the structured-document boundary. Geometry assertions cover the all-scalar
+direct root, the nested all-scalar `display` mapping, and the nested all-scalar
+`ports` sequence after expansion, as well as mixed-root and mixed nested
+alignment. They use the start of each decoded rendered label as the anchor and
+verify that all-scalar groups omit only marker clearance while retaining
+structural indentation. No screenshot or pixel baseline is required. CSS
 receives semantic-hook coverage and a maintained manual visual check; visual
 styling is intentionally author-overridable.
 

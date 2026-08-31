@@ -101,7 +101,15 @@ fn push_node(
 ) {
     match node.value() {
         NodeValue::Mapping(entries) => {
-            push_container_start(output, "mapping", position, depth, entries.len(), options);
+            push_container_start(
+                output,
+                "mapping",
+                position,
+                depth,
+                entries.len(),
+                entries.iter().all(|entry| is_scalar(entry.value().value())),
+                options,
+            );
             for entry in entries {
                 push_node(
                     output,
@@ -117,7 +125,15 @@ fn push_node(
             });
         }
         NodeValue::Sequence(items) => {
-            push_container_start(output, "sequence", position, depth, items.len(), options);
+            push_container_start(
+                output,
+                "sequence",
+                position,
+                depth,
+                items.len(),
+                items.iter().all(|item| is_scalar(item.value())),
+                options,
+            );
             for (index, item) in items.iter().enumerate() {
                 push_node(
                     output,
@@ -163,12 +179,17 @@ fn push_container_start(
     position: NodePosition<'_>,
     depth: usize,
     immediate_child_count: usize,
+    scalar_only: bool,
     options: HtmlRenderOptions,
 ) {
     let label = match position {
         NodePosition::Root => {
             output.push_str("<div data-structured-node=\"");
             push_encoded_attribute(output, kind);
+            if immediate_child_count > 0 {
+                output.push_str("\" data-structured-group=\"");
+                output.push_str(if scalar_only { "scalar-only" } else { "mixed" });
+            }
             output.push_str("\">");
             return;
         }
@@ -177,6 +198,10 @@ fn push_container_start(
 
     output.push_str("<details data-structured-container data-structured-node=\"");
     push_encoded_attribute(output, kind);
+    if immediate_child_count > 0 {
+        output.push_str("\" data-structured-group=\"");
+        output.push_str(if scalar_only { "scalar-only" } else { "mixed" });
+    }
     output.push('"');
     if depth <= 2 && immediate_child_count <= options.large_container_threshold() {
         output.push_str(" open");
@@ -184,6 +209,13 @@ fn push_container_start(
     output.push_str("><summary>");
     push_label(output, label);
     output.push_str("</summary>");
+}
+
+fn is_scalar(node: &NodeValue) -> bool {
+    matches!(
+        node,
+        NodeValue::String(_) | NodeValue::Number(_) | NodeValue::Boolean(_) | NodeValue::Null
+    )
 }
 
 fn push_scalar(

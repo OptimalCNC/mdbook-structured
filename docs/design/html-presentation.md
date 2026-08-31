@@ -36,6 +36,22 @@ at model depth two start open, while deeper containers start closed. A nested
 container with more than 100 immediate children starts closed, even at depth
 two.
 
+At every model depth, each non-empty mapping or sequence group is classified
+from its immediate rendered model/DOM children, including children inside a
+closed disclosure. A mixed group has at least one foldable mapping or sequence
+child, so every row reserves a disclosure gutter before its label: foldable rows
+place their native marker there and scalar rows leave it empty. An all-scalar
+group has only string, number, boolean, or null children; it omits only that
+marker-specific gutter and any root marker clearance while preserving ordinary
+structural nesting indentation and one sibling label column. A nested
+container's summary remains a foldable row in its parent group, while its own
+children are classified separately. Empty containers have no child label group,
+so their existing disclosure behavior is preserved. The alignment anchor is the
+start of the decoded rendered label (a mapping key or sequence index), not the
+first visible glyph and not raw source indentation or quoting. The heading,
+action buttons, and Original source disclosure are outside this data-row
+alignment system.
+
 The generated page includes controls to expand or collapse all containers on
 the active page. They do not affect other pages and do not persist state
 between visits.

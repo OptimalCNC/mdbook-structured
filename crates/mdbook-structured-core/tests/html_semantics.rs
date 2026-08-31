@@ -26,6 +26,16 @@ const REPRESENTATIVE_JSON: &str = r#"{
 
 const THRESHOLD_JSON: &str = r#"{"equal":[1,2],"over":[1,2,3]}"#;
 const ZERO_THRESHOLD_YAML: &str = "empty: []\n";
+const ALL_SCALAR_ROOT_MAPPING_JSON: &str =
+    r#"{"string":"text","number":1,"boolean":true,"null":null}"#;
+const ALL_SCALAR_ROOT_SEQUENCE_JSON: &str = r#"["text",1,true,null]"#;
+const GROUP_METADATA_JSON: &str = r#"{
+  "all-map": {"string":"text","number":1,"boolean":true,"null":null},
+  "all-seq": ["text",2,false,null],
+  "mixed-closed": {"scalar":"text","nested":{"leaf":"value"}},
+  "empty-map": {},
+  "empty-seq": []
+}"#;
 
 const LINE_BREAKS_JSON: &str = r#"{
   "plain": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -274,6 +284,72 @@ fn positive_semantic_tree_preserves_types_order_disclosure_and_source() {
 }
 
 #[test]
+fn rendered_group_metadata_classifies_immediate_children_and_empty_groups() {
+    let root_selector =
+        Selector::parse("section.structured-document > [data-structured-node]").unwrap();
+    for (source, source_name, node_kind) in [
+        (
+            ALL_SCALAR_ROOT_MAPPING_JSON,
+            "all-scalar-root-mapping.json",
+            "mapping",
+        ),
+        (
+            ALL_SCALAR_ROOT_SEQUENCE_JSON,
+            "all-scalar-root-sequence.json",
+            "sequence",
+        ),
+    ] {
+        let document = parse_json(source, source_name);
+        let rendered =
+            render_structured_page("All scalar root", &document, HtmlRenderOptions::default());
+        let html = rendered_browser_html(&rendered);
+        let roots = html.select(&root_selector).collect::<Vec<_>>();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots[0].value().attr("data-structured-node"),
+            Some(node_kind)
+        );
+        assert_eq!(
+            roots[0].value().attr("data-structured-group"),
+            Some("scalar-only")
+        );
+    }
+    for (source, source_name, node_kind) in [
+        ("{}", "empty-root-mapping.json", "mapping"),
+        ("[]", "empty-root-sequence.json", "sequence"),
+    ] {
+        let document = parse_json(source, source_name);
+        let rendered =
+            render_structured_page("Empty root", &document, HtmlRenderOptions::default());
+        let html = rendered_browser_html(&rendered);
+        let roots = html.select(&root_selector).collect::<Vec<_>>();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots[0].value().attr("data-structured-node"),
+            Some(node_kind)
+        );
+        assert_eq!(roots[0].value().attr("data-structured-group"), None);
+    }
+
+    let document = parse_json(GROUP_METADATA_JSON, "group-metadata.json");
+    let rendered = render_structured_page("Groups", &document, HtmlRenderOptions::new(0));
+    let html = rendered_browser_html(&rendered);
+    let roots = html.select(&root_selector).collect::<Vec<_>>();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(
+        roots[0].value().attr("data-structured-group"),
+        Some("mixed")
+    );
+
+    assert_container_group(&html, "all-map", "mapping", Some("scalar-only"), false);
+    assert_container_group(&html, "all-seq", "sequence", Some("scalar-only"), false);
+    assert_container_group(&html, "mixed-closed", "mapping", Some("mixed"), false);
+    assert_container_group(&html, "empty-map", "mapping", None, true);
+    assert_container_group(&html, "empty-seq", "sequence", None, true);
+    assert_container_group(&html, "nested", "mapping", Some("scalar-only"), false);
+}
+
+#[test]
 fn rendered_strings_mark_hard_break_sequences_without_changing_text() {
     let document = parse_json(LINE_BREAKS_JSON, "line-breaks.json");
     let rendered = render_structured_page("Line breaks", &document, HtmlRenderOptions::default());
@@ -405,6 +481,54 @@ fn parse_json(source: &str, source_name: &str) -> mdbook_structured_core::Struct
         Limits::default(),
     )
     .unwrap()
+}
+
+fn rendered_browser_html(rendered: &mdbook_structured_core::RenderedHtml) -> Html {
+    let mut browser_html = String::new();
+    pulldown_cmark::html::push_html(
+        &mut browser_html,
+        new_cmark_parser(rendered.as_str(), &MarkdownOptions::default()),
+    );
+    Html::parse_document(&browser_html)
+}
+
+fn assert_container_group(
+    html: &Html,
+    label: &str,
+    node_kind: &str,
+    group: Option<&str>,
+    open: bool,
+) {
+    let selector = Selector::parse("details[data-structured-container]").unwrap();
+    let matches = html
+        .select(&selector)
+        .filter(|container| {
+            let summary = direct_children(*container)
+                .find(|child| child.value().name() == "summary")
+                .expect("container must have a summary");
+            summary_text(summary) == label
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected one container labelled {label:?}"
+    );
+    let container = matches[0];
+    assert_eq!(
+        container.value().attr("data-structured-node"),
+        Some(node_kind)
+    );
+    assert_eq!(container.value().attr("data-structured-group"), group);
+    assert_eq!(container.value().attr("open").is_some(), open);
+}
+
+fn direct_children(element: ElementRef<'_>) -> impl Iterator<Item = ElementRef<'_>> {
+    element.children().filter_map(ElementRef::wrap)
+}
+
+fn summary_text(element: ElementRef<'_>) -> String {
+    element.text().collect()
 }
 
 fn key_label(text: &str, empty_marker: bool) -> ObservedLabel {

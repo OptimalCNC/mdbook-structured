@@ -24,6 +24,24 @@ async function expectOpen(locator, open) {
   await expect(locator).toHaveJSProperty("open", open);
 }
 
+async function openContainer(locator) {
+  if (!(await locator.evaluate((element) => element.open))) {
+    await locator.locator(":scope > summary").click();
+  }
+  await expectOpen(locator, true);
+}
+
+async function renderedLabelStarts(locator) {
+  return locator.evaluateAll((elements) =>
+    elements.map((element) => element.getBoundingClientRect().x),
+  );
+}
+
+function expectAligned(starts) {
+  expect(starts.length).toBeGreaterThan(0);
+  expect(Math.max(...starts) - Math.min(...starts)).toBeLessThan(0.5);
+}
+
 async function expectRuntimeDefaultPolicy(page) {
   await expectOpen(containerBySummary(page, "service"), true);
   await expectOpen(containerBySummary(page, "ports"), false);
@@ -53,6 +71,90 @@ test("built structured pages preserve markup policy and keyboard controls", asyn
     "{{#include missing.md}}",
   );
   await expectRuntimeDefaultPolicy(page);
+
+  const service = containerBySummary(page, "service");
+  const serviceNameLabel = service.locator(
+    ':scope > [data-structured-node="string"] > [data-structured-label="key"]',
+  ).first();
+  const servicePortsLabel = service.locator(
+    ':scope > details[data-structured-container] > summary > [data-structured-label="key"]',
+  ).first();
+  const serviceSummaryLabel = service.locator(
+    ':scope > summary > [data-structured-label="key"]',
+  );
+  const [serviceNameStart, servicePortsStart] = await Promise.all([
+    serviceNameLabel.evaluate((element) => element.getBoundingClientRect().x),
+    servicePortsLabel.evaluate((element) => element.getBoundingClientRect().x),
+  ]);
+  expect(Math.abs(serviceNameStart - servicePortsStart)).toBeLessThan(0.5);
+
+  const serviceSummaryStart = await serviceSummaryLabel.evaluate(
+    (element) => element.getBoundingClientRect().x,
+  );
+  const structuralIndent = serviceNameStart - serviceSummaryStart;
+  expect(structuralIndent).toBeGreaterThan(0);
+
+  const runtimeRoot = page.locator(
+    "section.structured-document > div[data-structured-node=mapping]",
+  );
+  const runtimeRootContainerLabels = runtimeRoot.locator(
+    ':scope > details[data-structured-container] > summary > [data-structured-label="key"]',
+  );
+  const runtimeRootScalarLabels = runtimeRoot.locator(
+    ':scope > [data-structured-node="string"] > [data-structured-label="key"]',
+  );
+  await expect(runtimeRootContainerLabels).toHaveCount(2);
+  await expect(runtimeRootScalarLabels).toHaveCount(1);
+  expectAligned([
+    ...(await renderedLabelStarts(runtimeRootContainerLabels)),
+    ...(await renderedLabelStarts(runtimeRootScalarLabels)),
+  ]);
+
+  const ports = containerBySummary(page, "ports");
+  const display = containerBySummary(page, "display");
+  await openContainer(service);
+  await openContainer(ports);
+  await openContainer(display);
+
+  const nestedAllScalarGroups = [
+    {
+      container: display,
+      labels: display.locator(
+        ':scope > [data-structured-node="string"] > [data-structured-label="key"]',
+      ),
+    },
+    {
+      container: ports,
+      labels: ports.locator(
+        ':scope > [data-structured-node="number"] > [data-structured-label="index"]',
+      ),
+    },
+  ];
+  for (const { container, labels } of nestedAllScalarGroups) {
+    const starts = await renderedLabelStarts(labels);
+    expectAligned(starts);
+    const rowStart = await labels.first().evaluate(
+      (element) => element.parentElement.getBoundingClientRect().x,
+    );
+    expect(Math.abs(starts[0] - (rowStart + structuralIndent))).toBeLessThan(0.5);
+  }
+
+  const markerEscapesDocument = await page.evaluate(() => {
+    const section = document.querySelector("section.structured-document");
+    const summary = document.querySelector(
+      "details[data-structured-container] > summary",
+    );
+    if (!section || !summary) {
+      throw new Error("structured section and container summary are required");
+    }
+    const sectionBox = section.getBoundingClientRect();
+    const summaryBox = summary.getBoundingClientRect();
+    return document.elementFromPoint(
+      Math.ceil(sectionBox.x) - 1,
+      summaryBox.y + summaryBox.height / 2,
+    ) === summary;
+  });
+  expect(markerEscapesDocument).toBe(false);
 
   const expandAll = page.getByRole("button", { name: "Expand all", exact: true });
   await expandAll.focus();
@@ -89,6 +191,21 @@ test("built structured pages preserve markup policy and keyboard controls", asyn
   await expect(yamlScalars).toHaveCount(2);
   await expect(yamlScalars.nth(0)).toBeVisible();
   await expect(yamlScalars.nth(1)).toBeVisible();
+
+  const yamlLabels = yamlRoot.locator(
+    ':scope > [data-structured-node="string"] > [data-structured-label="key"]',
+  );
+  await expect(yamlLabels).toHaveCount(2);
+  const yamlLabelStarts = await renderedLabelStarts(yamlLabels);
+  expectAligned(yamlLabelStarts);
+  const [yamlSectionStart, yamlRootStart] = await Promise.all([
+    page
+      .locator("section.structured-document")
+      .evaluate((element) => element.getBoundingClientRect().x),
+    yamlRoot.evaluate((element) => element.getBoundingClientRect().x),
+  ]);
+  expect(Math.abs(yamlRootStart - yamlSectionStart)).toBeLessThan(0.5);
+  expect(Math.abs(yamlLabelStarts[0] - yamlSectionStart)).toBeLessThan(0.5);
 
   await page.goto(runtimeUrl);
   await page.reload();
