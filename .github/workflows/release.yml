@@ -1,0 +1,238 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out tagged commit with full history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag ancestry and package versions
+        id: release
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'unsupported release tag: %s\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          release_version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'unsupported release version: %s\n' "$release_version" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+          tag_commit="$(git rev-parse --verify "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          checked_out_commit="$(git rev-parse --verify HEAD)"
+          if [[ "$checked_out_commit" != "$tag_commit" ]]; then
+            printf 'checked out %s, expected tag commit %s\n' \
+              "$checked_out_commit" "$tag_commit" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_SHA" != "$tag_commit" ]]; then
+            printf 'event SHA %s differs from tag commit %s\n' \
+              "$RELEASE_SHA" "$tag_commit" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            printf 'tag %s is not reachable from origin/main\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          metadata="$(cargo metadata --no-deps --format-version 1)"
+          mapfile -t package_rows < <(
+            jq -r '
+              .packages[]
+              | select(.name == "mdbook-structured-core" or .name == "mdbook-structured")
+              | [.name, .version]
+              | @tsv
+            ' <<<"$metadata"
+          )
+          if (( ${#package_rows[@]} != 2 )); then
+            printf 'expected exactly two release packages in cargo metadata\n' >&2
+            exit 1
+          fi
+
+          core_version=''
+          cli_version=''
+          for row in "${package_rows[@]}"; do
+            IFS=$'\t' read -r package_name package_version <<<"$row"
+            case "$package_name" in
+              mdbook-structured-core) core_version="$package_version" ;;
+              mdbook-structured) cli_version="$package_version" ;;
+            esac
+          done
+          if [[ "$core_version" != "$release_version" || "$cli_version" != "$release_version" ]]; then
+            printf 'tag %s expects %s; package versions are core=%s cli=%s\n' \
+              "$GITHUB_REF_NAME" "$release_version" "$core_version" "$cli_version" >&2
+            exit 1
+          fi
+
+          printf 'version=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
+          printf 'commit=%s\n' "$tag_commit" >> "$GITHUB_OUTPUT"
+          printf 'validated %s at %s\n' "$GITHUB_REF_NAME" "$tag_commit"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run strict locked Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run locked workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Build locked Rust documentation
+        run: cargo doc --workspace --all-features --locked --no-deps
+
+      - name: Package core crate
+        run: cargo package --locked -p mdbook-structured-core
+
+      - name: Package CLI crate
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+
+          package_log="$(mktemp)"
+          package_config=''
+          cleanup() {
+            rm -f "$package_log"
+            if [[ -n "$package_config" ]]; then
+              rm -f "$package_config"
+            fi
+          }
+          trap cleanup EXIT
+
+          # The unmodified command is the authoritative first attempt.
+          if cargo package --locked -p mdbook-structured 2>&1 | tee "$package_log"; then
+            exit 0
+          fi
+
+          # The core package is intentionally absent before bootstrap. Permit
+          # a local patch only for Cargo's exact missing-package diagnostic.
+          if ! grep -Fq 'no matching package named `mdbook-structured-core` found' "$package_log"; then
+            printf 'cargo package failed for an unexpected reason\n' >&2
+            exit 1
+          fi
+
+          package_config="$(mktemp)"
+          printf '%s\n' \
+            '[patch.crates-io]' \
+            "mdbook-structured-core = { path = \"${GITHUB_WORKSPACE}/crates/mdbook-structured-core\" }" \
+            > "$package_config"
+          cargo --config "$package_config" package --locked -p mdbook-structured
+
+  publish:
+    name: Publish crates to crates.io
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out validated tag commit with full history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Confirm validated commit
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          checked_out_commit="$(git rev-parse --verify HEAD)"
+          if [[ "$checked_out_commit" != "$RELEASE_COMMIT" ]]; then
+            printf 'publish checkout %s differs from validated commit %s\n' \
+              "$checked_out_commit" "$RELEASE_COMMIT" >&2
+            exit 1
+          fi
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Request short-lived crates.io token
+        id: crates_io_auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish core before CLI
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/publish-crate.sh mdbook-structured-core "$RELEASE_VERSION"
+          scripts/publish-crate.sh mdbook-structured "$RELEASE_VERSION"
+
+      - name: Verify exact non-yanked registry records
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          user_agent='mdbook-structured-release/1.0'
+          check_registry_record() {
+            local crate_name="$1"
+            local endpoint="https://crates.io/api/v1/crates/${crate_name}/${RELEASE_VERSION}"
+            local body
+
+            if ! body="$(curl --silent --show-error --location --fail \
+              --connect-timeout 5 --max-time 10 \
+              --user-agent "$user_agent" "$endpoint")"; then
+              printf 'could not fetch exact crates.io record for %s %s\n' \
+                "$crate_name" "$RELEASE_VERSION" >&2
+              return 1
+            fi
+            if ! jq -e --arg expected "$RELEASE_VERSION" \
+              '(.version.num == $expected) and (.version.yanked == false)' \
+              <<<"$body" >/dev/null; then
+              printf 'crates.io record for %s %s is absent or yanked\n' \
+                "$crate_name" "$RELEASE_VERSION" >&2
+              return 1
+            fi
+            printf '%s %s is visible with yanked=false\n' "$crate_name" "$RELEASE_VERSION"
+          }
+
+          check_registry_record mdbook-structured-core
+          check_registry_record mdbook-structured
