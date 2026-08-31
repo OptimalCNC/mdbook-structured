@@ -69,11 +69,6 @@ fn stock_mdbook_build_preserves_routes_links_and_semantics() {
                 immediate_child_count: 3
             },
             ObservedContainer {
-                kind: ObservedNodeKind::Mapping,
-                open: true,
-                immediate_child_count: 3
-            },
-            ObservedContainer {
                 kind: ObservedNodeKind::Sequence,
                 open: false,
                 immediate_child_count: 2

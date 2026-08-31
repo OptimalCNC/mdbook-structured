@@ -6,7 +6,7 @@ use mdbook_markdown::{MarkdownOptions, new_cmark_parser, pulldown_cmark};
 use mdbook_structured_core::{
     HtmlRenderOptions, Limits, StructuredFormat, parse_document, render_structured_page,
 };
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use support::observed_document::{
     ObservedDocument, ObservedLabel, ObservedNode, ScalarKind, observe_raw_html,
     observe_rendered_html,
@@ -27,13 +27,20 @@ const REPRESENTATIVE_JSON: &str = r#"{
 const THRESHOLD_JSON: &str = r#"{"equal":[1,2],"over":[1,2,3]}"#;
 const ZERO_THRESHOLD_YAML: &str = "empty: []\n";
 
+const LINE_BREAKS_JSON: &str = r#"{
+  "plain": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+  "lf\nkey": "line one\nline two",
+  "cr": "line one\rline two",
+  "crlf": "line one\r\nline two"
+}"#;
+
 const SAFETY_JSON: &str = r#"{
   "helper": "{{#include missing.md}}",
   "markup": "<img src=x onerror=alert(1)>",
   "multiline": "line one\nline two"
 }"#;
 
-const VALID_PROBE_HTML: &str = r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><details data-structured-container data-structured-node="mapping" open><summary>Mapping</summary><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></details><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details></section>"#;
+const VALID_PROBE_HTML: &str = r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><div data-structured-node="mapping"><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></div><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details></section>"#;
 
 #[test]
 fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
@@ -63,20 +70,23 @@ fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
             ),
         ),
         (
-            "non-details container",
+            "disclosure model root",
             mutate_once(
-                VALID_PROBE_HTML,
-                "<details data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary><div data-structured-node=\"string\">",
-                "<div data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary><div data-structured-node=\"string\">",
+                &mutate_once(
+                    VALID_PROBE_HTML,
+                    "<div data-structured-node=\"mapping\"><div data-structured-node=\"string\">",
+                    "<details data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary><div data-structured-node=\"string\">",
+                ),
+                "</div></div><details data-structured-original-source>",
+                "</div></details><details data-structured-original-source>",
             )
-            .replacen("</div></details><details data-structured-original-source>", "</div></div><details data-structured-original-source>", 1),
         ),
         (
-            "missing container hook and direct summary",
+            "container hook on model root",
             mutate_once(
                 VALID_PROBE_HTML,
-                "<details data-structured-container data-structured-node=\"mapping\" open><summary>Mapping</summary>",
-                "<details data-structured-node=\"mapping\" open><div><summary>Mapping</summary></div>",
+                "<div data-structured-node=\"mapping\">",
+                "<div data-structured-container data-structured-node=\"mapping\">",
             ),
         ),
         (
@@ -102,7 +112,7 @@ fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
         ),
         (
             "original source before root",
-            r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details><details data-structured-container data-structured-node="mapping" open><summary>Mapping</summary><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></details></section>"#.to_owned(),
+            r#"<section class="structured-document"><h1>Probe</h1><button data-structured-action="expand-all">Expand all</button><button data-structured-action="collapse-all">Collapse all</button><details data-structured-original-source><summary>Original source (JSON)</summary><pre><code data-structured-format="json">&#123;"name":"value"&#125;</code></pre></details><div data-structured-node="mapping"><div data-structured-node="string"><span data-structured-label="key">name</span><span data-structured-value>value</span></div></div></section>"#.to_owned(),
         ),
         (
             "stray unknown empty hook",
@@ -250,7 +260,7 @@ fn positive_semantic_tree_preserves_types_order_disclosure_and_source() {
         zero_observed.root,
         ObservedNode::Mapping {
             label: None,
-            open: false,
+            open: true,
             children: vec![ObservedNode::Sequence {
                 label: Some(key_label("empty", false)),
                 open: true,
@@ -261,6 +271,64 @@ fn positive_semantic_tree_preserves_types_order_disclosure_and_source() {
     assert_eq!(zero_observed.original_summary, "Original source (YAML)");
     assert_eq!(zero_observed.original_format, "yaml");
     assert_eq!(zero_observed.original_source, ZERO_THRESHOLD_YAML);
+}
+
+#[test]
+fn rendered_strings_mark_hard_break_sequences_without_changing_text() {
+    let document = parse_json(LINE_BREAKS_JSON, "line-breaks.json");
+    let rendered = render_structured_page("Line breaks", &document, HtmlRenderOptions::default());
+    let mut browser_html = String::new();
+    pulldown_cmark::html::push_html(
+        &mut browser_html,
+        new_cmark_parser(rendered.as_str(), &MarkdownOptions::default()),
+    );
+    let html = Html::parse_document(&browser_html);
+
+    let marker_selector = Selector::parse("[data-structured-line-break]").unwrap();
+    let markers = html.select(&marker_selector).collect::<Vec<_>>();
+    assert_eq!(markers.len(), 4);
+    for marker in markers {
+        assert_eq!(marker.value().name(), "span");
+        assert_eq!(marker.value().attr("aria-hidden"), Some("true"));
+        assert!(marker.text().collect::<String>().is_empty());
+    }
+
+    assert_marked_breaks(
+        element_with_text(&html, "[data-structured-label=\"key\"]", "lf\nkey"),
+        "lf\nkey",
+        &["\n"],
+    );
+    assert_marked_breaks(
+        element_with_text(
+            &html,
+            "[data-structured-value]",
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        ),
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        &[],
+    );
+    assert_marked_breaks(
+        element_with_text(&html, "[data-structured-value]", "line one\nline two"),
+        "line one\nline two",
+        &["\n"],
+    );
+    assert_marked_breaks(
+        element_with_text(&html, "[data-structured-value]", "line one\rline two"),
+        "line one\rline two",
+        &["\r"],
+    );
+    assert_marked_breaks(
+        element_with_text(&html, "[data-structured-value]", "line one\r\nline two"),
+        "line one\r\nline two",
+        &["\r\n"],
+    );
+
+    let original = element_with_text(
+        &html,
+        "details[data-structured-original-source] code[data-structured-format]",
+        LINE_BREAKS_JSON,
+    );
+    assert_eq!(original.select(&marker_selector).count(), 0);
 }
 
 #[test]
@@ -382,4 +450,35 @@ fn mutate_once(source: &str, from: &str, to: &str) -> String {
         "mutation target must occur exactly once"
     );
     source.replacen(from, to, 1)
+}
+
+fn element_with_text<'a>(html: &'a Html, selector: &str, expected: &str) -> ElementRef<'a> {
+    let selector = Selector::parse(selector).expect("test-owned selector must parse");
+    let matches = html
+        .select(&selector)
+        .filter(|element| element.text().collect::<String>() == expected)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one {selector:?} element with text {expected:?}"
+    );
+    matches[0]
+}
+
+fn assert_marked_breaks(element: ElementRef<'_>, expected_text: &str, expected: &[&str]) {
+    assert_eq!(element.text().collect::<String>(), expected_text);
+    let selector = Selector::parse("[data-structured-line-break]").unwrap();
+    let markers = element.select(&selector).collect::<Vec<_>>();
+    assert_eq!(markers.len(), expected.len());
+    for (marker, expected_break) in markers.into_iter().zip(expected) {
+        let following_text = marker
+            .next_sibling()
+            .and_then(|node| node.value().as_text())
+            .expect("line-break marker must immediately precede preserved text");
+        assert!(
+            following_text.starts_with(*expected_break),
+            "line-break marker must precede {expected_break:?}, got {following_text:?}"
+        );
+    }
 }

@@ -30,9 +30,10 @@ For each theme and viewport, record `Pass` or `Fail` after completing the checkl
 - Confirm compact key/value and container alignment without overlap.
 - Confirm hover feedback is restrained and keyboard focus is clearly visible.
 - Confirm container disclosures use native twisties.
-- Confirm the root and `service` containers start open, while `ports`, `display`, and `large` start closed.
+- Confirm the data starts directly with `service`, without a synthetic `Mapping` row; `service` starts open, while `ports`, `display`, and `large` start closed.
 - Confirm the empty key and empty string use an explicit empty marker.
-- Confirm the complete long value wraps without truncation and the complete multiline value remains readable.
+- Confirm the complete long value wraps without truncation or a hard-break marker, while each authored break in the multiline value shows a muted `↵` marker.
+- Select and copy the multiline value, and confirm the copied text retains its newline without the visible `↵` marker.
 - Activate Expand all and Collapse all by keyboard, and confirm they affect the structured model containers but not Original source.
 - Open Original source and confirm its format-labelled YAML source is visible and exactly matches the fixture source.
 - Disable JavaScript, reload the page, and confirm the structured content remains readable and native disclosure controls still operate.

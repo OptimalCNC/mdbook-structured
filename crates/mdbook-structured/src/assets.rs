@@ -32,6 +32,7 @@ mod tests {
             "[data-structured-label=\"key\"]",
             "[data-structured-label=\"index\"]",
             "[data-structured-value]",
+            "[data-structured-line-break]",
             "[data-structured-empty=\"key\"]",
             "[data-structured-empty=\"string\"]",
             "[data-structured-action]",

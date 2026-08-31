@@ -166,11 +166,48 @@ pub(crate) fn observe_raw_html(rendered: &str) -> ObservedDocument {
     ObservedDocument {
         heading: element_text(heading),
         actions,
-        root: observe_node(model_root),
+        root: observe_root_node(model_root),
         original_open: original.value().attr("open").is_some(),
         original_summary: element_text(summary),
         original_format: required_attribute(code, "data-structured-format").to_owned(),
         original_source: element_text(code),
+    }
+}
+
+fn observe_root_node(element: ElementRef<'_>) -> ObservedNode {
+    match required_attribute(element, "data-structured-node") {
+        "mapping" | "sequence" => {
+            assert_eq!(
+                element.value().name(),
+                "div",
+                "mapping and sequence roots must be non-disclosure div elements"
+            );
+            assert!(
+                element.value().attr("data-structured-container").is_none(),
+                "model root cannot carry the nested-container hook"
+            );
+            assert!(
+                direct_element_children(element).all(|child| child.value().name() != "summary"),
+                "model root cannot have a synthetic summary"
+            );
+
+            let children = observe_children(element);
+            if required_attribute(element, "data-structured-node") == "mapping" {
+                ObservedNode::Mapping {
+                    label: None,
+                    open: true,
+                    children,
+                }
+            } else {
+                ObservedNode::Sequence {
+                    label: None,
+                    open: true,
+                    children,
+                }
+            }
+        }
+        "string" | "number" | "boolean" | "null" => observe_node(element),
+        unknown => panic!("unknown structured root node: {unknown}"),
     }
 }
 
@@ -317,15 +354,27 @@ fn audit_model_node_ownership(structured_root: ElementRef<'_>, model_root: Eleme
             ),
             "non-root model node must be a direct child of a model container"
         );
-        assert_eq!(
-            parent.value().name(),
-            "details",
-            "model-node parent must be a details container"
-        );
-        assert!(
-            parent.value().attr("data-structured-container").is_some(),
-            "model-node parent must carry the container hook"
-        );
+        if parent == model_root {
+            assert_eq!(
+                parent.value().name(),
+                "div",
+                "model root must be a non-disclosure div"
+            );
+            assert!(
+                parent.value().attr("data-structured-container").is_none(),
+                "model root cannot carry the nested-container hook"
+            );
+        } else {
+            assert_eq!(
+                parent.value().name(),
+                "details",
+                "nested model-node parent must be a details container"
+            );
+            assert!(
+                parent.value().attr("data-structured-container").is_some(),
+                "nested model-node parent must carry the container hook"
+            );
+        }
     }
 }
 
@@ -365,7 +414,6 @@ fn audit_empty_key_marker(marker: ElementRef<'_>) {
         Some("mapping"),
         "empty key marker must label a mapping child"
     );
-    required_container_summary(mapping);
 }
 
 fn audit_empty_string_marker(marker: ElementRef<'_>) {

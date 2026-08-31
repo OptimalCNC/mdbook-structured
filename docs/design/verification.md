@@ -43,16 +43,18 @@ The renderer is tested through mdBook's Markdown parser followed by a
 standards-compliant HTML parser, never by comparing serialized HTML bytes. A
 small test-only semantic probe walks the `.structured-document` subtree and
 records an `ObservedDocument`: heading text, node kind, mapping key or sequence
-index, scalar text and type, child count, container-open state, and raw-source
-text.
+index, scalar text and type, child count, container-open state, hard-break
+marker placement, and raw-source text.
 
 Tests assert this observation against concise expected values. They verify
 that `Chapter.name` becomes the visible `h1`, source nodes appear in order,
 scalar types remain distinguishable, ordinary displayable text is escaped and
-complete, the data root is rendered directly, the two-level and
-large-container rules are applied, and `loaded_source` is retained without
-tool-level modification. Passing generated content through Markdown also
-verifies the [raw HTML framing](html-presentation.md#renderer-boundary).
+complete, the data root is rendered directly without a synthetic disclosure,
+authored breaks remain distinct from responsive wrapping without changing
+selected text, the nested-container disclosure rules are applied, and
+`loaded_source` is retained without tool-level modification. Passing generated
+content through Markdown also verifies the [raw HTML
+framing](html-presentation.md#renderer-boundary).
 
 The probe uses only documented semantic hooks; wrapper nesting, whitespace
 between tags, attribute order, and ordinary CSS classes remain free to change.

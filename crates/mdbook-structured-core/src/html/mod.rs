@@ -47,7 +47,7 @@ pub fn render_structured_page(
     output.push_str("</h1>");
     push_action(&mut output, "expand-all", "Expand all");
     push_action(&mut output, "collapse-all", "Collapse all");
-    push_node(&mut output, document.root(), None, 1, options);
+    push_node(&mut output, document.root(), NodePosition::Root, 1, options);
     push_original_source(&mut output, document);
     output.push_str("</section>");
     RenderedHtml(output)
@@ -57,6 +57,31 @@ pub fn render_structured_page(
 enum NodeLabel<'a> {
     Key(&'a str),
     Index(usize),
+}
+
+#[derive(Clone, Copy)]
+enum NodePosition<'a> {
+    Root,
+    Child(NodeLabel<'a>),
+}
+
+#[derive(Clone, Copy)]
+enum ScalarKind {
+    String,
+    Number,
+    Boolean,
+    Null,
+}
+
+impl ScalarKind {
+    fn attribute_value(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Boolean => "boolean",
+            Self::Null => "null",
+        }
+    }
 }
 
 fn push_action(output: &mut String, action: &str, visible_text: &str) {
@@ -70,64 +95,86 @@ fn push_action(output: &mut String, action: &str, visible_text: &str) {
 fn push_node(
     output: &mut String,
     node: &Node,
-    label: Option<NodeLabel<'_>>,
+    position: NodePosition<'_>,
     depth: usize,
     options: HtmlRenderOptions,
 ) {
     match node.value() {
         NodeValue::Mapping(entries) => {
-            push_container_start(output, "mapping", label, depth, entries.len(), options);
+            push_container_start(output, "mapping", position, depth, entries.len(), options);
             for entry in entries {
                 push_node(
                     output,
                     entry.value(),
-                    Some(NodeLabel::Key(entry.decoded_key())),
+                    NodePosition::Child(NodeLabel::Key(entry.decoded_key())),
                     depth + 1,
                     options,
                 );
             }
-            output.push_str("</details>");
+            output.push_str(match position {
+                NodePosition::Root => "</div>",
+                NodePosition::Child(_) => "</details>",
+            });
         }
         NodeValue::Sequence(items) => {
-            push_container_start(output, "sequence", label, depth, items.len(), options);
+            push_container_start(output, "sequence", position, depth, items.len(), options);
             for (index, item) in items.iter().enumerate() {
                 push_node(
                     output,
                     item,
-                    Some(NodeLabel::Index(index)),
+                    NodePosition::Child(NodeLabel::Index(index)),
                     depth + 1,
                     options,
                 );
             }
-            output.push_str("</details>");
+            output.push_str(match position {
+                NodePosition::Root => "</div>",
+                NodePosition::Child(_) => "</details>",
+            });
         }
         NodeValue::String(value) => {
-            push_scalar(output, "string", label, value, value.is_empty());
+            push_scalar(
+                output,
+                ScalarKind::String,
+                position,
+                value,
+                value.is_empty(),
+            );
         }
         NodeValue::Number(value) => {
-            push_scalar(output, "number", label, value.as_str(), false);
+            push_scalar(output, ScalarKind::Number, position, value.as_str(), false);
         }
         NodeValue::Boolean(value) => {
             push_scalar(
                 output,
-                "boolean",
-                label,
+                ScalarKind::Boolean,
+                position,
                 if *value { "true" } else { "false" },
                 false,
             );
         }
-        NodeValue::Null => push_scalar(output, "null", label, "null", false),
+        NodeValue::Null => push_scalar(output, ScalarKind::Null, position, "null", false),
     }
 }
 
 fn push_container_start(
     output: &mut String,
     kind: &str,
-    label: Option<NodeLabel<'_>>,
+    position: NodePosition<'_>,
     depth: usize,
     immediate_child_count: usize,
     options: HtmlRenderOptions,
 ) {
+    let label = match position {
+        NodePosition::Root => {
+            output.push_str("<div data-structured-node=\"");
+            push_encoded_attribute(output, kind);
+            output.push_str("\">");
+            return;
+        }
+        NodePosition::Child(label) => label,
+    };
+
     output.push_str("<details data-structured-container data-structured-node=\"");
     push_encoded_attribute(output, kind);
     output.push('"');
@@ -135,31 +182,21 @@ fn push_container_start(
         output.push_str(" open");
     }
     output.push_str("><summary>");
-    match label {
-        Some(label) => push_label(output, label),
-        None => push_encoded_text(
-            output,
-            if kind == "mapping" {
-                "Mapping"
-            } else {
-                "Sequence"
-            },
-        ),
-    }
+    push_label(output, label);
     output.push_str("</summary>");
 }
 
 fn push_scalar(
     output: &mut String,
-    kind: &str,
-    label: Option<NodeLabel<'_>>,
+    kind: ScalarKind,
+    position: NodePosition<'_>,
     value: &str,
     empty_string: bool,
 ) {
     output.push_str("<div data-structured-node=\"");
-    push_encoded_attribute(output, kind);
+    push_encoded_attribute(output, kind.attribute_value());
     output.push_str("\">");
-    if let Some(label) = label {
+    if let NodePosition::Child(label) = position {
         push_label(output, label);
     }
     output.push_str("<span data-structured-value");
@@ -167,7 +204,12 @@ fn push_scalar(
         output.push_str(" data-structured-empty=\"string\"");
     }
     output.push('>');
-    push_encoded_text(output, value);
+    match kind {
+        ScalarKind::String => push_rendered_text_with_break_markers(output, value),
+        ScalarKind::Number | ScalarKind::Boolean | ScalarKind::Null => {
+            push_encoded_text(output, value);
+        }
+    }
     output.push_str("</span></div>");
 }
 
@@ -179,7 +221,7 @@ fn push_label(output: &mut String, label: NodeLabel<'_>) {
                 output.push_str(" data-structured-empty=\"key\"");
             }
             output.push('>');
-            push_encoded_text(output, key);
+            push_rendered_text_with_break_markers(output, key);
         }
         NodeLabel::Index(index) => {
             output.push_str("<span data-structured-label=\"index\">");
@@ -187,6 +229,32 @@ fn push_label(output: &mut String, label: NodeLabel<'_>) {
         }
     }
     output.push_str("</span>");
+}
+
+fn push_rendered_text_with_break_markers(output: &mut String, value: &str) {
+    let mut segment_start = 0;
+    let mut characters = value.char_indices().peekable();
+
+    while let Some((offset, character)) = characters.next() {
+        if !matches!(character, '\r' | '\n') {
+            continue;
+        }
+
+        push_encoded_text(output, &value[segment_start..offset]);
+        output.push_str("<span data-structured-line-break aria-hidden=\"true\"></span>");
+
+        let mut segment_end = offset + character.len_utf8();
+        if character == '\r'
+            && let Some(&(line_feed_offset, '\n')) = characters.peek()
+        {
+            characters.next();
+            segment_end = line_feed_offset + '\n'.len_utf8();
+        }
+        push_encoded_text(output, &value[offset..segment_end]);
+        segment_start = segment_end;
+    }
+
+    push_encoded_text(output, &value[segment_start..]);
 }
 
 fn push_original_source(output: &mut String, document: &StructuredDocument) {

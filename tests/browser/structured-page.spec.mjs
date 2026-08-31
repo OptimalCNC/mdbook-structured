@@ -25,7 +25,6 @@ async function expectOpen(locator, open) {
 }
 
 async function expectRuntimeDefaultPolicy(page) {
-  await expectOpen(containerBySummary(page, "Mapping"), true);
   await expectOpen(containerBySummary(page, "service"), true);
   await expectOpen(containerBySummary(page, "ports"), false);
   await expectOpen(containerBySummary(page, "display"), false);
@@ -59,7 +58,7 @@ test("built structured pages preserve markup policy and keyboard controls", asyn
   await expandAll.focus();
   await expect(expandAll).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.locator("details[data-structured-container][open]")).toHaveCount(5);
+  await expect(page.locator("details[data-structured-container][open]")).toHaveCount(4);
   await expectOpen(originalSource, false);
   await expect(
     scalarValue(
@@ -79,20 +78,68 @@ test("built structured pages preserve markup policy and keyboard controls", asyn
 
   await page.goto(yamlIndexUrl);
   const yamlRoot = page.locator(
-    "section.structured-document > details[data-structured-node=mapping]",
+    "section.structured-document > div[data-structured-node=mapping]",
   );
   const yamlScalars = page.locator(
     "section.structured-document [data-structured-node=string]",
   );
   await expect(yamlRoot).toHaveCount(1);
-  await expectOpen(yamlRoot, true);
+  await expect(yamlRoot).not.toHaveAttribute("data-structured-container");
+  await expect(yamlRoot.locator(":scope > summary")).toHaveCount(0);
   await expect(yamlScalars).toHaveCount(2);
   await expect(yamlScalars.nth(0)).toBeVisible();
   await expect(yamlScalars.nth(1)).toBeVisible();
 
   await page.goto(runtimeUrl);
   await page.reload();
-  await expect(modelContainers).toHaveCount(5);
+  await expect(modelContainers).toHaveCount(4);
   await expectRuntimeDefaultPolicy(page);
   await expectOpen(originalSource, false);
+});
+
+test("hard-break markers distinguish authored breaks from soft wrapping", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto(runtimeUrl);
+  await page.getByRole("button", { name: "Expand all", exact: true }).click();
+
+  const longValue = scalarValue(
+    page,
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-repeat-without-truncation",
+  );
+  const multilineValue = scalarValue(page, "line one\nline two");
+  await expect(longValue.locator("[data-structured-line-break]")).toHaveCount(0);
+  await expect(multilineValue.locator("[data-structured-line-break]")).toHaveCount(1);
+
+  const visualLineCount = await longValue.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return new Set(Array.from(range.getClientRects(), ({ top }) => Math.round(top))).size;
+  });
+  expect(visualLineCount).toBeGreaterThan(1);
+
+  const marker = multilineValue.locator("[data-structured-line-break]");
+  await expect(marker).toHaveAttribute("aria-hidden", "true");
+  const markerStyle = await marker.evaluate((element) => {
+    const style = getComputedStyle(element, "::after");
+    return { content: style.content, userSelect: getComputedStyle(element).userSelect };
+  });
+  expect(markerStyle.content).toContain("↵");
+  expect(markerStyle.userSelect).toBe("none");
+
+  const selectedText = await multilineValue.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const text = selection.toString();
+    selection.removeAllRanges();
+    return text;
+  });
+  expect(selectedText).toBe("line one\nline two");
+  await expect(
+    page.locator(
+      "details[data-structured-original-source] [data-structured-line-break]",
+    ),
+  ).toHaveCount(0);
 });

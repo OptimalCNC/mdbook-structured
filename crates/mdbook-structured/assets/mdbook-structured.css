@@ -110,6 +110,16 @@
   white-space: pre-wrap;
 }
 
+.structured-document [data-structured-line-break] {
+  color: var(--structured-null);
+  opacity: 0.75;
+  user-select: none;
+}
+
+.structured-document [data-structured-line-break]::after {
+  content: "\2060↵";
+}
+
 .structured-document [data-structured-node="string"] > [data-structured-value] {
   color: var(--structured-string);
 }

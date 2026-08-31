@@ -29,11 +29,12 @@ indentation, twisties, key/value alignment, restrained hover states, and
 distinct scalar coloring. Those interaction and styling ideas are
 independently implemented so the page remains part of the mdBook theme.
 
-The data root is rendered directly; no synthetic data-root row is added.
-Mappings and sequences are container rows using native HTML `details` and
-`summary` elements. The first two nesting levels are open initially. A
-container with more than 100 immediate children starts closed, even when it is
-shallow.
+The data root is rendered directly as an always-visible node; no synthetic
+data-root row, label, or disclosure is added. Nested mappings and sequences are
+container rows using native HTML `details` and `summary` elements. Containers
+at model depth two start open, while deeper containers start closed. A nested
+container with more than 100 immediate children starts closed, even at depth
+two.
 
 The generated page includes controls to expand or collapse all containers on
 the active page. They do not affect other pages and do not persist state
@@ -44,7 +45,11 @@ CSS type markers distinguish strings, numbers, booleans, and null, so a string
 `true` remains visibly different from boolean `true`. Empty keys and empty
 strings receive an explicit visual marker. Long strings retain their complete
 content and source whitespace; CSS handles readable wrapping rather than
-truncating or simplifying values. Mapping and sequence order are preserved.
+truncating or simplifying values. Each authored line-break sequence in a
+rendered string value or mapping key has a muted `↵` marker immediately before
+the preserved break, so it remains distinguishable from responsive wrapping.
+The marker is absent from copied text, accessibility text, and Original source.
+Mapping and sequence order are preserved.
 
 ## Original source
 
