@@ -65,6 +65,6 @@ in v1 because it uses a different renderer.
 
 - [Configuration](configuration.md)
 - [Authoring](authoring.md)
-- [Self-contained example](../examples/self-contained/README.md)
+- [Self-contained example](https://github.com/OptimalCNC/mdbook-structured/tree/main/examples/self-contained)
 - [Design Reference](design/overview.md)
 - [Maintainer Guide](maintainers.md)
