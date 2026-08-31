@@ -1,0 +1,8 @@
+name: mixed-fields
+settings:
+  theme: light
+  compact: false
+enabled: true
+targets:
+  - web
+  - print
