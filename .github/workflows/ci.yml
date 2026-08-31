@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Build Rust documentation
+        run: cargo doc --workspace --all-features --locked --no-deps
+
+      - name: Package core crate
+        run: cargo package --locked -p mdbook-structured-core
+
+      - name: Package CLI crate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_log="$(mktemp)"
+          trap 'rm -f "$package_log" "$package_config"' EXIT
+
+          # Keep the exact package command as the first attempt. Once the core
+          # crate is published, this succeeds and no local override is used.
+          package_config=""
+          if cargo package --locked -p mdbook-structured 2>&1 | tee "$package_log"; then
+            exit 0
+          fi
+
+          # Before the first publication, Cargo's package verification rewrites
+          # the path dependency to crates.io. Only that known missing-package
+          # error may use the local patch below; every other package failure is
+          # still fatal.
+          if ! grep -Fq 'no matching package named `mdbook-structured-core` found' "$package_log"; then
+            echo "cargo package failed for an unexpected reason" >&2
+            exit 1
+          fi
+
+          package_config="$(mktemp)"
+          printf '%s\n' \
+            '[patch.crates-io]' \
+            "mdbook-structured-core = { path = \"${GITHUB_WORKSPACE}/crates/mdbook-structured-core\" }" \
+            > "$package_config"
+          cargo --config "$package_config" package --locked -p mdbook-structured
+
+  msrv:
+    name: Rust 1.88 MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Check workspace on MSRV
+        run: cargo check --workspace --all-targets --all-features --locked
+
+  browser:
+    name: Browser integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install mdBook
+        run: cargo install mdbook --version 0.5.3 --locked
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser tests
+        run: npm run test:browser
+
+  docs-build:
+    name: Build mdBook documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install mdBook
+        run: cargo install mdbook --version 0.5.3 --locked
+
+      - name: Build documentation
+        run: mdbook build .
