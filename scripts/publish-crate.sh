@@ -8,6 +8,17 @@ fi
 
 crate=$1
 version=$2
+
+if [[ ! $crate =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+  printf 'invalid crate name; expected an ASCII crates.io identifier\n' >&2
+  exit 2
+fi
+
+if [[ ! $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+  printf 'invalid version; expected a semantic version\n' >&2
+  exit 2
+fi
+
 endpoint="https://crates.io/api/v1/crates/${crate}/${version}"
 user_agent='mdbook-structured-publish-helper/1.0'
 export CARGO_HTTP_USER_AGENT="$user_agent"
@@ -16,6 +27,7 @@ query_version_status() {
   local status rc
 
   if status=$(curl --silent --show-error --location \
+    --connect-timeout 5 --max-time 10 \
     --user-agent "$user_agent" \
     --output /dev/null --write-out '%{http_code}' \
     "$endpoint"); then
