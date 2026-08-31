@@ -3,6 +3,16 @@ name = "mdbook-structured-core"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+description = "Parser-neutral JSON and YAML structured documents with source provenance and HTML rendering."
+readme = "../../README.md"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/mdbook-structured-core"
+keywords = ["mdbook", "json", "yaml", "parser", "structured-data"]
+categories = ["parser-implementations"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 json-syntax.workspace = true

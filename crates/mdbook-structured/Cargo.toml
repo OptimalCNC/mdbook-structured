@@ -3,6 +3,16 @@ name = "mdbook-structured"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "An mdBook preprocessor that renders listed JSON and YAML chapters as structured HTML pages."
+readme = "../../README.md"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/mdbook-structured"
+keywords = ["mdbook", "preprocessor", "documentation", "json", "yaml"]
+categories = ["command-line-utilities"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 mdbook-core.workspace = true

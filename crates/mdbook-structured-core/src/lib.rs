@@ -1,3 +1,7 @@
+//! Parser-neutral [`StructuredDocument`] values with JSON/YAML adapters retain
+//! source provenance while providing typed diagnostics, resource limits, and
+//! semantic HTML rendering.
+
 mod diagnostic;
 mod html;
 mod limits;

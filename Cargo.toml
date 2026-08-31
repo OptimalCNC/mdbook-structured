@@ -4,14 +4,17 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 version = "0.1.0"
+repository = "https://github.com/OptimalCNC/mdbook-structured"
+homepage = "https://optimalcnc.github.io/mdbook-structured/"
 
 [workspace.dependencies]
 json-syntax = { version = "0.12", default-features = false }
 mdbook-core = "0.5"
 mdbook-markdown = "0.5"
-mdbook-structured-core = { path = "crates/mdbook-structured-core" }
+mdbook-structured-core = { path = "crates/mdbook-structured-core", version = "0.1.0" }
 proptest = "1"
 rlsp-yaml-parser = "=0.11.1"
 scraper = "0.24"

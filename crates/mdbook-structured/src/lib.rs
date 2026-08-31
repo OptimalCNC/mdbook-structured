@@ -1,3 +1,7 @@
+//! An external mdBook preprocessor that renders structured JSON and YAML
+//! chapters through render and rewrite-links phases, with an install command
+//! and support for the stock HTML renderer.
+
 mod assets;
 mod cli;
 mod config;
