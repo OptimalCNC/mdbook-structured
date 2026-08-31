@@ -9,7 +9,7 @@ fi
 crate=$1
 version=$2
 
-if [[ ! $crate =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+if [[ ! $crate =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || (( ${#crate} > 64 )); then
   printf 'invalid crate name; expected an ASCII crates.io identifier\n' >&2
   exit 2
 fi
