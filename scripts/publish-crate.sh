@@ -30,16 +30,17 @@ cleanup_response() {
 trap cleanup_response EXIT
 
 validate_registry_record() {
-  if ! jq -e \
+  if ! jq -e -s \
     --arg expected_crate "$crate" \
     --arg expected_version "$version" \
-    '(.version | type == "object")
-      and (.version.crate | type == "string")
-      and (.version.num | type == "string")
-      and (.version.yanked | type == "boolean")
-      and (.version.crate == $expected_crate)
-      and (.version.num == $expected_version)
-      and (.version.yanked == false)' \
+    '(length == 1)
+      and (.[0].version | type == "object")
+      and (.[0].version.crate | type == "string")
+      and (.[0].version.num | type == "string")
+      and (.[0].version.yanked | type == "boolean")
+      and (.[0].version.crate == $expected_crate)
+      and (.[0].version.num == $expected_version)
+      and (.[0].version.yanked == false)' \
     "$response_file" >/dev/null; then
     printf 'crates.io returned a mismatched, malformed, or yanked record for %s %s\n' \
       "$crate" "$version" >&2
