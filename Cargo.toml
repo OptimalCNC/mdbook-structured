@@ -6,7 +6,7 @@ resolver = "3"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-version = "0.1.1"
+version = "0.1.2"
 repository = "https://github.com/OptimalCNC/mdbook-structured"
 homepage = "https://optimalcnc.github.io/mdbook-structured/"
 
@@ -14,7 +14,7 @@ homepage = "https://optimalcnc.github.io/mdbook-structured/"
 json-syntax = { version = "0.12", default-features = false }
 mdbook-core = "0.5"
 mdbook-markdown = "0.5"
-mdbook-structured-core = { path = "crates/mdbook-structured-core", version = "0.1.1" }
+mdbook-structured-core = { path = "crates/mdbook-structured-core", version = "0.1.2" }
 proptest = "1"
 rlsp-yaml-parser = "=0.11.1"
 scraper = "0.24"

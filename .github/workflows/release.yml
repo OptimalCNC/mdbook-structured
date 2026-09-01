@@ -51,6 +51,9 @@ jobs:
       - name: Run strict locked Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+      - name: Install mdBook
+        run: cargo install mdbook --version 0.5.3 --locked
+
       - name: Run locked workspace tests
         run: cargo test --workspace --locked
 
