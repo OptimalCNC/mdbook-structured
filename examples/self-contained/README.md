@@ -1,7 +1,7 @@
 # mdbook-structured Self-Contained Example
 
-This runnable mdBook demonstrates how `mdbook-structured` renders listed JSON
-and YAML chapters alongside ordinary Markdown. It includes a complete
+This runnable mdBook demonstrates how `mdbook-structured` renders registered
+JSON and YAML chapters alongside ordinary Markdown. It includes a complete
 `book.toml` and representative source files.
 
 ## Prerequisites
@@ -36,13 +36,14 @@ running, open the URL printed by mdBook to browse the example.
 - `src/mixed-top-level.yaml` alternates scalar and foldable fields at the data
   root so their presentation can be compared on one page.
 - `src/config/README.yaml` and `src/config/README.json` become distinct
-  extension-qualified pages (`index.yaml.html` and `index.json.html`).
+  extension-qualified pages (`config/index.yaml.html` and
+  `config/index.json.html`).
 - Links use the exact `config/README.yaml` and `config/README.json` source
-  paths because their shared `config/` convenience alias is ambiguous.
-- `src/exact/index.md` demonstrates an ordinary Markdown index route, while
-  `src/single/README.yaml` demonstrates a unique structured README alias.
-- Links in `src/README.md` are authored with source paths and rewritten to the
-  corresponding structured pages.
+  identities to select the corresponding generated pages.
+- `src/single/README.yaml` demonstrates the extension-qualified route for one
+  registered structured README source.
+- Links to registered structured chapters in `src/README.md` are authored with
+  source paths and rewritten to the corresponding generated pages.
 
 ## Generated assets
 

@@ -13,17 +13,35 @@ part of the ordinary mdBook book: navigation, themes, search, edit links, and
 the stock renderer continue to own their usual responsibilities.
 
 The architecture is intentionally general, but the v1 input set is fixed to
-`.json`, `.yaml`, and `.yml`. A file is eligible only when mdBook has loaded it
-as a chapter listed in `SUMMARY.md`. The implementation does not enumerate the
-source tree to discover unlisted chapters.
+the exact lowercase extensions `.json`, `.yaml`, and `.yml`. A chapter is a
+registered structured chapter only when mdBook has loaded it into the received
+`Book` and its `Chapter.source_path` has one of those extensions. The
+implementation does not enumerate the source tree to discover chapters.
+
+At build time, the preprocessor has two semantic operations:
+
+1. transform a registered structured chapter and project its generated route;
+2. rewrite an authored Markdown link that resolves to a registered
+   structured chapter.
+
+The received `Book` is a transport container for finding inputs to those
+operations. A chapter that does not pass the registration gate never enters
+structured transformation. During link extraction, a source chapter supplies
+only authored bytes and a relative base; only a parser-confirmed link
+destination that matches the structured target index enters link rewriting.
+Any candidate rejected by its gate is outside the preprocessor's semantic
+awareness: it is not validated, routed, diagnosed, or otherwise handled by
+this module.
 
 V1 includes:
 
 - JSON and YAML parsing through selected parser libraries;
 - a parser-neutral `StructuredDocument` model with source provenance;
 - build-time semantic HTML rendering and progressive JavaScript enhancement;
-- book-wide Markdown link rewriting for registered structured chapters;
-- chapter-route collision preflight and fail-fast diagnostics;
+- rewriting of authored Markdown links that resolve to registered
+  structured chapters;
+- diagnostics scoped to registered structured chapters, their generated
+  routes, and matched structured references;
 - an installer that generates starter CSS and JavaScript without editing
   `book.toml`; and
 - tests that verify semantic behavior at the parser, renderer, preprocessor,
@@ -35,15 +53,16 @@ schema-aware or domain-specific views, generated JSON Pointer anchors,
 persistent expansion state, print-specific styling, automatic configuration
 file edits, or special presentation for non-displayable control characters.
 
-The ownership split is:
+The ownership split follows the same admission boundary:
 
-- mdBook core owns book structure, processing order, interpretation of final
-  chapter paths, URL generation, and rendering infrastructure;
+- mdBook core owns book structure, source loading and containment, processing
+  order, ordinary chapter routes and links, static files, final URL
+  generation, and rendering infrastructure;
 - mdbook-structured-core owns parser adapters, lossless model projection,
   diagnostics, and structured-page rendering; and
-- mdbook-structured owns the mdBook subprocess protocol, chapter selection,
-  the structured logical-path shim, book-wide link mapping, and the install
-  command.
+- mdbook-structured owns the mdBook subprocess protocol, the structured
+  chapter admission gate, the structured logical-path shim, the structured
+  target index, matched-reference rewriting, and the install command.
 
 This keeps the external seam small while allowing future format adapters and
 renderers to evolve without coupling their parser types to mdBook. The

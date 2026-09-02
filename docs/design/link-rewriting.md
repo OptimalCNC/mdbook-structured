@@ -1,15 +1,21 @@
-# Chapter Link Rewriting
+# Structured-Target Link Rewriting
 
-`rewrite-links` builds exact chapter lookups and convenience-alias candidate
-sets from the source paths and logical chapter paths in the received `Book`.
-Every chapter source path is exact. Independently authored logical paths are
-also exact, while paths synthesized from a README source by mdBook's `index`
-phase are convenience aliases. Both kinds of lookup resolve to the outputs
-established by [route projection](routes.md).
+`rewrite-links` constructs one target index from registered structured
+chapters:
 
-The rewriter resolves a relative Markdown destination from the current chapter
-using mdBook's path conventions, then consults the exact lookup before any
-convenience aliases.
+```text
+normalized structured source_path -> generated HTML route
+```
+
+Only direct structured source identities enter the index. This keeps
+`README.yaml` and `README.json` distinct, mapping them to `index.yaml.html` and
+`index.json.html`, respectively.
+
+To find possible matches, the rewriter uses the Markdown parser to extract
+authored link-destination spans and uses the current chapter path as their
+relative base. Extraction alone does not admit a link destination. A link
+destination becomes a matched structured reference only when lexical relative
+resolution identifies a member of the structured target index.
 
 For example:
 
@@ -17,60 +23,30 @@ For example:
 [Runtime configuration](config/runtime.yaml)
 ```
 
-becomes a link to `config/runtime.yaml.html`, with the relative URL calculated
-from the current chapter in the same manner as mdBook.
+is rewritten to the relative URL for `config/runtime.yaml.html` when that
+source identity belongs to a registered structured chapter.
 
-## README and index aliases
+## Matched-reference edits
 
-For a structured source whose file stem is `README`, the map also registers
-mdBook's post-index `index.md` path and its parent-directory form as aliases
-for the projected `index.<source-extension>.html` page. The source path itself,
-such as `README.yaml`, remains an exact chapter lookup even though `render` has
-already replaced `Chapter.path` with the shimmed path.
+For a matched structured reference, the rewriter replaces only the authored
+path portion with the target's generated HTML route. Query, fragment, title,
+surrounding Markdown bytes, and authored percent or entity spelling remain
+part of the edit contract. Fragments are opaque: the preprocessor neither
+interprets JSON Pointer syntax nor creates or validates pointer anchors.
 
-An actual registered chapter at a destination takes precedence over a
-convenience alias. Otherwise, an alias with one candidate is rewritten, while
-an alias with multiple candidates fails with a diagnostic naming each source
-and projected output. Candidate sets retain every README target: the tool does
-not reject otherwise valid chapters or choose one by `SUMMARY.md` order.
+Target matching may normalize lexical dot segments. It does not canonicalize
+the filesystem or validate source containment. The generated HTML route is
+emitted directly, so this operation does not rely on mdBook's generic `.md`
+link conversion. This is separate from the `.md` chapter-path shim applied by
+[`render`](routes.md).
 
-For example, direct links to `README.yaml` and `README.json` in the same
-directory resolve to `index.yaml.html` and `index.json.html`. A link to their
-shared `index.md` or directory-style alias is ambiguous, in the absence of an
-exact chapter at that destination, and fails only when that link appears in
-authored Markdown.
+The rewriter changes only the authored link-destination bytes and does not
+reserialize a chapter. If extraction does not produce a matched structured
+reference, no semantic input exists for this operation: the candidate is not
+resolved further, classified, validated, rewritten, or diagnosed by this
+module.
 
-## Rewriting rules
-
-The rewriter edits Markdown link spans using mdBook's Markdown parser. It does
-not reserialize an entire chapter. It preserves query strings, percent
-encoding, and fragment text verbatim. Fragments are opaque: the tool does not
-parse JSON Pointer syntax and does not generate or validate pointer anchors in
-v1.
-
-The stock HTML renderer subsequently rewrites any local URL containing a
-literal `.md` substring, even when that substring is not the final extension.
-The [route preflight](routes.md#preflight) therefore rejects a projected path
-such as `guide.md.yaml.html`. `rewrite-links` also fails if a query or fragment
-would introduce literal `.md` into an otherwise valid rewritten destination.
-These checks prevent silent corruption while leaving already encoded text
-untouched. V1 does not invent a URL encoding to work around this mdBook
-behavior.
-
-The following are left unchanged:
-
-- images and image destinations;
-- raw HTML links, code blocks, and ordinary scalar text;
-- external, protocol-relative, and other non-local URI schemes;
-- fragment-only links;
-- destinations with neither an exact chapter nor an alias candidate; and
-- destinations that already end in `.html`.
-
-Reference-style links are supported by rewriting their definition once. An
-image-only reference definition is unchanged. If one definition is shared by
-an image and a normal link and rewriting it would change the image, the
-preprocessor fails with a clear diagnostic rather than guessing. Strings
-inside JSON/YAML values are never scanned as Markdown and are never rewritten.
-
-Authored fragments remain available for future or user-provided anchors, but
-the structured renderer does not create JSON Pointer-based anchors in v1.
+A reference diagnostic may occur only after a link destination has become a
+matched structured reference, and it is scoped to producing the promised edit
+for that reference. The rewriter does not construct an ordinary chapter route
+map or diagnose book topology outside the structured target index.

@@ -1,15 +1,15 @@
 # Selective Structured-Chapter Contract
 
-**Status:** Approved in conversation; written-spec review pending
+**Status:** Approved
 **Date:** 2026-09-02
 **Repository:** `OptimalCNC/mdbook-structured`
 
 ## Purpose
 
-Issue #1 is a responsibility correction. `mdbook-structured` must not behave
-as a validator or route planner for an entire mdBook. Its build-time semantic
-role is limited to transforming registered structured chapters and rewriting
-authored Markdown references that point to those chapters.
+`mdbook-structured` must not behave as a validator or route planner for an
+entire mdBook. Its build-time semantic role is limited to transforming
+registered structured chapters and rewriting authored Markdown links that
+point to those chapters.
 
 This record is the governing contract for the `render` and `rewrite-links`
 phases. The structured core library and the separately invoked `install`
@@ -25,7 +25,7 @@ Chapter.source_path
     -> RegisteredStructuredSource?
     -> StructuredRoute
 
-Markdown event + current link base
+Markdown link event + current link base
     -> MatchedStructuredReference?
     -> Link edit
 ```
@@ -46,8 +46,8 @@ received `Book` and its `Chapter.source_path` has the exact lowercase extension
 `.json`, `.yaml`, or `.yml`.
 
 Registration is based on mdBook's chapter metadata. The plugin does not
-discover files from the source tree. The extension discriminator is the only
-observation made about a chapter that has not been admitted.
+discover files from the source tree. To decide admission to `render`, it
+observes no other chapter property before applying the extension discriminator.
 
 ## `render` contract
 
@@ -86,15 +86,14 @@ chapters:
 normalized structured source_path -> generated HTML route
 ```
 
-No ordinary chapter route or synthesized convenience alias is part of this
-index. Direct structured source identities remain distinct, including
-`README.yaml` and `README.json`.
+Only direct registered structured source identities are keys in this index.
+Those identities remain distinct, including `README.yaml` and `README.json`.
 
 A source chapter need not be structured. It is used only as the authored-byte
 and relative-path context while a possible structured reference is extracted.
 The Markdown parser is a lexical extractor: only a parser-confirmed authored
-destination that resolves to a member of the structured target index becomes a
-`MatchedStructuredReference`.
+link destination that resolves to a member of the structured target index
+becomes a `MatchedStructuredReference`.
 
 For an admitted reference, the rewriter replaces only the authored path
 portion with the matched target's generated HTML route. Query, fragment,
@@ -106,10 +105,11 @@ The rewriter emits the final structured HTML route directly. mdBook remains
 responsible for writing and rendering the resulting chapter; the plugin does
 not rely on mdBook's generic `.md` link conversion for structured references.
 
-Anything that does not pass the reference admission gate is outside the
-rewriter's semantic domain. It is not resolved, classified, validated,
-rewritten, diagnosed, or covered as a plugin behavior. If a source chapter
-cannot provide a usable relative base, it contributes no admitted references.
+A candidate that does not match the structured target index is discarded after
+extraction and membership lookup. It is not resolved beyond that lookup,
+validated, rewritten, diagnosed, or covered as a plugin behavior. If a source
+chapter cannot provide a usable relative base, it contributes no admitted
+references.
 
 ## Diagnostic scope
 

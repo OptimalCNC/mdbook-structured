@@ -13,37 +13,37 @@ ordinary Markdown chapters:
 ```
 
 mdBook loads each listed target as UTF-8 chapter text. The structured
-preprocessor dispatches from `Chapter.source_path`, which is the real source
-path, and leaves that field unchanged. The title supplied in `SUMMARY.md`
-continues to be the chapter title.
+preprocessor registers a chapter when its `Chapter.source_path` has the exact
+lowercase extension `.json`, `.yaml`, or `.yml`. That field remains the source
+identity, and the preprocessor leaves it unchanged. The title supplied in
+`SUMMARY.md` continues to be the chapter title.
 
 Structured chapter URLs preserve the source extension. For example,
 `config/runtime.yaml` is published as `config/runtime.yaml.html`. The
-[route contract](routes.md) defines the logical-path shim, README/index
-handling, and collision policy.
+[structured route contract](routes.md) defines the logical-path shim and the
+integrity of routes generated for registered structured chapters.
 
-Only listed chapters are transformed. A Markdown link to an unlisted JSON or
-YAML file does not create a structured page. Stock mdBook may nevertheless
-copy any non-`.md` file under the source directory, including listed and
-unlisted JSON/YAML files, into the output as a static file. V1 accepts this
-stock publication behavior.
+Merely linking to a JSON or YAML source does not register it. Registration
+comes from the chapter metadata in the received `Book`; the preprocessor does
+not discover sources from the filesystem. Only a registered source can enter
+structured transformation or the structured target index.
 
-Links to listed structured chapters use the source path in authored Markdown:
+Links to registered structured chapters use the source path in authored
+Markdown:
 
 ```md
 [Runtime configuration](config/runtime.yaml)
 ```
 
-The separate [chapter-link rewriter](link-rewriting.md) maps that destination
-to the generated HTML page. Relative paths, README/index handling, query
-strings, and fragments otherwise follow mdBook's path conventions.
+The separate [structured-target link rewriter](link-rewriting.md) maps that
+destination to the generated HTML page. It resolves the authored path
+lexically from the current chapter and preserves the query, fragment, title,
+and surrounding Markdown bytes.
 
 Extension-qualified README links remain distinct. If both `README.yaml` and
 `README.json` are listed from one directory, authors can link to either source
-name and reach its corresponding page. Their shared `index.md` and
-directory-style convenience aliases are ambiguous when no actual chapter owns
-the destination, however, so an authored link using either alias stops the
-build instead of selecting a target by `SUMMARY.md` order.
+name and reach `index.yaml.html` or `index.json.html`, respectively. These
+extension-qualified source identities are the keys used for target matching.
 
 Authors register the two preprocessor phases and the generated assets in
 `book.toml`. The installer prints the required entries but never inserts them.

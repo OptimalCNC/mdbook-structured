@@ -6,4 +6,4 @@
 - [YAML README route](config/README.yaml)
 - [JSON README route](config/README.json)
 - [Markdown index](exact/index.md)
-- [Unique README alias](single/README.yaml)
+- [Single README route](single/README.yaml)

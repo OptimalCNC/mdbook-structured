@@ -1,10 +1,9 @@
-# Routes and Collisions
+# Structured Routes
 
-The route shim preserves a structured source's extension while continuing to
-use the stock HTML renderer. `render` takes the logical path established after
-mdBook's `index` phase and replaces its extension with
-`<source-extension>.md`. The stock renderer then replaces only that final
-`.md`:
+Route projection begins only after a chapter has been admitted as a registered
+structured chapter. `render` takes the chapter's logical path after mdBook's
+`index` phase and replaces its extension with `<source-extension>.md`. The
+stock HTML renderer then replaces only that final `.md`:
 
 ```text
 source_path                 post-index path        structured path           HTML output
@@ -15,46 +14,26 @@ README.json                 index.md               index.json.md             ind
 ```
 
 The final `.md` is an integration shim for the stock renderer's
-`with_extension("html")` rule. It is applied consistently to every structured
-chapter, not only when a collision is detected, so published URLs do not
-depend on the presence of another file.
+`with_extension("html")` rule. It is part of the admitted chapter's route
+projection, not link rewriting. Applying the shim consistently also makes a
+structured page's generated route independent of other book content.
 
-The real source remains in `Chapter.source_path`, so edit links and diagnostics
-continue to point to `config/runtime.yaml` or `schemas/manifest.json`. An
-ordinary `settings.md` chapter and a structured `settings.yaml` chapter
-therefore produce `settings.html` and `settings.yaml.html`.
+`Chapter.source_path` remains the registered source identity. Consequently,
+`README.yaml` and `README.json` project to distinct `index.yaml.html` and
+`index.json.html` routes even though mdBook gives them the same interim
+`index.md` path.
 
-Likewise, `README.yaml` and `README.json` in one directory produce distinct
-final routes even though mdBook's `index` phase gives them the same interim
-`index.md` path. Their shared index and directory-style link aliases may be
-ambiguous, but alias ambiguity is diagnosed only when such a link is authored;
-it is not an output-route collision. Direct links to the two source paths
-remain distinct.
+## Generated-route integrity
 
-## Preflight
+The route-integrity domain contains only pairs of registered structured source
+identities and routes projected for them. A registered chapter that lacks the
+metadata required to construct its pair produces a diagnostic scoped to that
+chapter; it is not silently removed from the structured target set.
 
-Before mutating any chapter, `render` projects every final chapter
-destination. Ordinary chapters use their existing logical path; structured
-chapters use the source-extension shim. The preflight then applies mdBook's
-`with_extension("html")` rule and rejects duplicate final chapter routes,
-naming every conflicting source chapter.
+Any additional integrity rule must be defined entirely in terms of those
+registered source-to-route pairs, and its diagnostic may identify only values
+from those pairs. No other chapter, route, or file enters route projection or
+its integrity checks; mdBook owns their routing and publication.
 
-Exact projected-route collisions remain possible, most notably between
-`settings.yaml` and an authored `settings.yaml.md` chapter. The preflight fails
-with every conflicting source listed. Routes are deterministic and never
-change in response to a collision.
-
-A projected structured HTML route that still contains a literal `.md`
-substring is also rejected because the stock renderer would corrupt generated
-navigation links to it. Finally, the preflight rejects the narrow case in
-which a projected chapter destination exactly matches a non-`.md` source file
-that stock mdBook would copy to that destination. Exact candidate-path probes
-for this check do not discover or transform unlisted chapters.
-
-The preflight does not claim to inventory every stock renderer artifact,
-theme asset, redirect, or internal route. Those remain mdBook's
-responsibility; the plugin's guarantee covers its projected chapter routes
-and exact static-source conflicts with those routes.
-
-The resulting route map is the authority consumed by
-[chapter-link rewriting](link-rewriting.md).
+The resulting structured source-to-output projection supplies the target index
+used by [structured-target link rewriting](link-rewriting.md).

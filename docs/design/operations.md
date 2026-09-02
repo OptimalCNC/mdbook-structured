@@ -43,27 +43,36 @@ renderers = ["html"]
 ```
 
 The ordering implements the [processing pipeline](architecture.md): `render`
-converts eligible JSON/YAML chapters, assigns their source-extension route
-shims, and does so before helper expansion. `rewrite-links` runs afterward and
-covers links in ordinary Markdown, including links introduced by includes.
+converts registered JSON/YAML chapters, assigns their source-extension route
+shims, and does so before helper expansion. `rewrite-links` runs afterward;
+parser-confirmed link destinations, including those introduced by includes,
+are edited only when they match the structured target index.
 
-Files not present as chapters are never transformed as structured chapters.
-Each registered structured chapter must parse and render successfully.
-Parser-reported malformed input, duplicate decoded keys, lossless-projection
-failures, route errors, and resource-limit violations stop the build with a
-filename, source location, and, when available, structured path. There is no
+Registration is derived only from chapter metadata in the received `Book` and
+an exact lowercase `.json`, `.yaml`, or `.yml` `Chapter.source_path`
+extension. Each registered structured chapter must parse, render, and project
+its generated route successfully. Parser-reported malformed input, duplicate
+decoded keys, lossless-projection failures, generated-route errors, and
+resource-limit violations stop the build with the registered source identity.
+Source location and structured path are included when applicable. There is no
 silent fallback that leaves a broken registered source as raw text.
 
-The fixed v1 extension set is `.json`, `.yaml`, and `.yml`; unrelated chapters
-pass through unchanged. Limits are explicit configuration, not silent
-truncation. `command`, `after`, `before`, and `renderers` are mdBook-owned
-registration keys rather than plugin options. The same applies to mdBook's
-standard `optional` key. After those keys are excluded, an unknown or invalid
-plugin-specific configuration field is an error.
+Only a registered structured chapter enters `render`. During `rewrite-links`,
+a source chapter supplies authored bytes and a relative base, but only a link
+destination matched by the structured target index enters the operation's
+semantic domain. mdBook owns book interpretation and routing beyond those
+admitted values.
 
-Books containing structured chapters support `mdbook build` with the stock
-HTML renderer. `mdbook test` uses a different renderer and is unsupported for
-such books in v1. With the recommended renderer filters, mdBook skips both
+Limits are explicit configuration, not silent truncation. `command`, `after`,
+`before`, and `renderers` are mdBook-owned registration keys rather than plugin
+options. The same applies to mdBook's standard `optional` key. After those
+keys are excluded, an unknown or invalid plugin-specific configuration field
+is an error.
+
+Books containing registered structured chapters support `mdbook build` with
+the stock HTML renderer. `mdbook test` uses a different renderer and is
+unsupported for such books in v1. With the recommended renderer filters,
+mdBook skips both
 commands during `mdbook test` and applies its default test behavior to the
 untransformed structured text, so the result is content-dependent and carries
 no tool guarantee. The tool does not remove or replace structured chapters to

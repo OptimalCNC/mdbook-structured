@@ -1,7 +1,7 @@
 # Authoring
 
-Structured pages are selected by `SUMMARY.md`. Entries can point directly to
-JSON or YAML sources:
+Structured pages are registered from `SUMMARY.md` entries whose source paths
+have the exact lowercase extension `.json`, `.yaml`, or `.yml`:
 
 ```markdown
 - [Runtime YAML](config/runtime.yaml)
@@ -10,14 +10,13 @@ JSON or YAML sources:
 
 Links in ordinary Markdown should use those source paths. The generated pages
 preserve the extension, for example `config/runtime.yaml.html` and
-`config/runtime.json.html`.
+`config/runtime.json.html`. A parser-confirmed Markdown link destination is
+rewritten when relative resolution matches a registered structured source.
 
-`README.yaml` and `README.json` are distinct routes, as are
-`index.yaml.html` and `index.json.html`. Exact source-path links always win.
-Convenience README/index/directory aliases are created only when unique; an
-ambiguous alias is an authored error and fails the build rather than choosing
-silently.
+`README.yaml` and `README.json` are distinct registered source identities.
+Direct references to them reach `index.yaml.html` and `index.json.html`,
+respectively.
 
 See the formal [authoring contract](design/authoring.md), [route rules](design/routes.md),
-and [chapter link rewriting](design/link-rewriting.md) chapters for complete
-precedence and collision behavior.
+and [structured-target link rewriting](design/link-rewriting.md) chapters for complete
+registration, route-projection, and target-matching behavior.
