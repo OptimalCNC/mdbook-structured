@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::Path;
 
@@ -7,8 +7,7 @@ use mdbook_markdown::{MarkdownOptions, new_cmark_parser};
 
 use crate::destination::{AuthoredDestination, LocalDestination, ParserConfirmedDestination};
 use crate::{
-    AliasCandidateFact, AppDiagnostic, AppDiagnosticKind, ChapterTarget, LinkResolution,
-    LinkRouteMap, LogicalChapterPath, MdBookPathHazardFact,
+    AppDiagnostic, AppDiagnosticKind, LogicalChapterPath, OutputRoute, StructuredTargetIndex,
 };
 
 struct DestinationEdit {
@@ -27,39 +26,31 @@ struct DefinitionKey {
     end: usize,
 }
 
-#[derive(Default)]
-struct ReferenceUses {
-    normal_link: bool,
-    image: bool,
-}
-
 struct ReferenceDefinition {
-    label: String,
     destination: String,
     span: Range<usize>,
 }
 
-pub fn rewrite_chapter_links(
+pub(crate) fn rewrite_chapter_links(
     current_path: &LogicalChapterPath,
     markdown: &str,
-    routes: &LinkRouteMap,
+    targets: &StructuredTargetIndex,
 ) -> Result<String, AppDiagnostic> {
     let definition_parser = new_cmark_parser(markdown, &MarkdownOptions::default());
     let reference_definitions = definition_parser.reference_definitions().clone();
     let definitions_by_span: BTreeMap<_, _> = reference_definitions
         .iter()
-        .map(|(label, definition)| {
+        .map(|(_, definition)| {
             (
                 definition_key(&definition.span),
                 ReferenceDefinition {
-                    label: label.to_owned(),
                     destination: definition.dest.to_string(),
                     span: definition.span.clone(),
                 },
             )
         })
         .collect();
-    let mut reference_uses = BTreeMap::<DefinitionKey, ReferenceUses>::new();
+    let mut linked_definitions = BTreeSet::<DefinitionKey>::new();
     let mut edits = Vec::new();
 
     let parser = new_cmark_parser(markdown, &MarkdownOptions::default());
@@ -79,34 +70,22 @@ pub fn rewrite_chapter_links(
                     dest_url.as_ref(),
                     scanned.angle_wrapped,
                 )?;
-                if let Some(edit) = build_edit(current_path, scanned.range, authored, routes)? {
+                if let Some(edit) = build_edit(current_path, scanned.range, authored, targets)? {
                     edits.push(edit);
                 }
             }
             Event::Start(Tag::Link { link_type, id, .. }) if is_reference_link_type(link_type) => {
-                record_reference_use(
+                record_linked_definition(
                     &reference_definitions,
                     id.as_ref(),
-                    &mut reference_uses,
-                    false,
-                )?;
-            }
-            Event::Start(Tag::Image { link_type, id, .. }) if is_reference_link_type(link_type) => {
-                record_reference_use(
-                    &reference_definitions,
-                    id.as_ref(),
-                    &mut reference_uses,
-                    true,
+                    &mut linked_definitions,
                 )?;
             }
             _ => {}
         }
     }
 
-    for (key, uses) in reference_uses {
-        if !uses.normal_link {
-            continue;
-        }
+    for key in linked_definitions {
         let definition = definitions_by_span.get(&key).ok_or_else(protocol_error)?;
         let scanned =
             scan_reference_destination(markdown, definition.span.clone(), &definition.destination)?;
@@ -118,20 +97,9 @@ pub fn rewrite_chapter_links(
             &definition.destination,
             scanned.angle_wrapped,
         )?;
-        let Some(edit) = build_edit(current_path, scanned.range, authored, routes)? else {
-            continue;
-        };
-
-        if uses.image {
-            return Err(AppDiagnostic::from_kind(
-                AppDiagnosticKind::MixedReferenceUse {
-                    reference_label: definition.label.clone(),
-                    destination: definition.destination.clone(),
-                },
-                "a changed reference definition is shared by a link and an image".to_owned(),
-            ));
+        if let Some(edit) = build_edit(current_path, scanned.range, authored, targets)? {
+            edits.push(edit);
         }
-        edits.push(edit);
     }
 
     apply_edits(markdown, edits)
@@ -144,19 +112,13 @@ fn is_reference_link_type(link_type: LinkType) -> bool {
     )
 }
 
-fn record_reference_use(
+fn record_linked_definition(
     definitions: &mdbook_markdown::pulldown_cmark::RefDefs<'_>,
     id: &str,
-    uses: &mut BTreeMap<DefinitionKey, ReferenceUses>,
-    image: bool,
+    linked_definitions: &mut BTreeSet<DefinitionKey>,
 ) -> Result<(), AppDiagnostic> {
     let definition = definitions.get(id).ok_or_else(protocol_error)?;
-    let uses = uses.entry(definition_key(&definition.span)).or_default();
-    if image {
-        uses.image = true;
-    } else {
-        uses.normal_link = true;
-    }
+    linked_definitions.insert(definition_key(&definition.span));
     Ok(())
 }
 
@@ -171,7 +133,7 @@ fn build_edit(
     current_path: &LogicalChapterPath,
     range: Range<usize>,
     authored: ParserConfirmedDestination<'_>,
-    routes: &LinkRouteMap,
+    targets: &StructuredTargetIndex,
 ) -> Result<Option<DestinationEdit>, AppDiagnostic> {
     let AuthoredDestination::Local(destination) =
         AuthoredDestination::parse(current_path, authored)?
@@ -179,21 +141,17 @@ fn build_edit(
         return Ok(None);
     };
 
-    let target = match routes.resolve(destination.lookup()) {
-        LinkResolution::Exact(target) | LinkResolution::UniqueAlias(target) => target,
-        LinkResolution::Ambiguous(candidates) => {
-            return Err(ambiguous_alias(destination.lookup(), candidates)?);
-        }
-        LinkResolution::Missing => return Ok(None),
+    let Some(output_route) = targets.output_for_source(destination.lookup()) else {
+        return Ok(None);
     };
-    let replacement = rewritten_destination(current_path, &destination, target)?;
+    let replacement = rewritten_destination(current_path, &destination, output_route)?;
     if replacement == destination.raw_authored() {
         return Ok(None);
     }
     if replacement.contains(".md") {
         return Err(AppDiagnostic::from_kind(
-            AppDiagnosticKind::MdBookPathHazard {
-                fact: MdBookPathHazardFact::RewrittenDestination(replacement),
+            AppDiagnosticKind::MatchedReferencePathHazard {
+                rewritten_destination: replacement,
             },
             "a rewritten Markdown destination contains literal .md".to_owned(),
         ));
@@ -202,51 +160,16 @@ fn build_edit(
     Ok(Some(DestinationEdit { range, replacement }))
 }
 
-fn ambiguous_alias(
-    authored_path: &LogicalChapterPath,
-    candidates: &[ChapterTarget],
-) -> Result<AppDiagnostic, AppDiagnostic> {
-    let mut facts = candidates
-        .iter()
-        .map(|candidate| {
-            let source_path = candidate
-                .source_path()
-                .cloned()
-                .ok_or_else(protocol_error)?;
-            Ok(AliasCandidateFact::new(
-                source_path,
-                candidate.output_route().clone(),
-            ))
-        })
-        .collect::<Result<Vec<_>, AppDiagnostic>>()?;
-    if facts.len() < 2 {
-        return Err(protocol_error());
-    }
-
-    let additional = facts.split_off(2);
-    let second = facts.pop().ok_or_else(protocol_error)?;
-    let first = facts.pop().ok_or_else(protocol_error)?;
-    Ok(AppDiagnostic::from_kind(
-        AppDiagnosticKind::AmbiguousAlias {
-            authored_path: authored_path.clone(),
-            first,
-            second,
-            additional,
-        },
-        "an authored Markdown destination matches multiple README aliases".to_owned(),
-    ))
-}
-
 fn rewritten_destination(
     current_path: &LogicalChapterPath,
     destination: &LocalDestination<'_>,
-    target: &ChapterTarget,
+    output_route: &OutputRoute,
 ) -> Result<String, AppDiagnostic> {
     let current_parent = current_path
         .as_path()
         .parent()
         .unwrap_or_else(|| Path::new(""));
-    let output_path = target.output_route().as_path();
+    let output_path = output_route.as_path();
     let relative = relative_path(current_parent, output_path);
     let mut rewritten =
         preserve_authored_path_spelling(current_path, destination, output_path, &relative)?;

@@ -205,6 +205,305 @@ fn render_transforms_nested_structured_chapters_without_touching_other_fields() 
 }
 
 #[test]
+fn render_admits_structured_sources_before_interpreting_route_metadata() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Ordinary sentinel",
+            "ordinary Markdown",
+            "guide.md",
+            "../test/index.md",
+        )
+        .into(),
+        chapter(
+            "Registered YAML",
+            "enabled: true\n",
+            "config/runtime.yaml",
+            "config/runtime.yaml",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
+
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    )
+    .unwrap();
+    let before_chapters = chapters(&before);
+    let rendered_chapters = chapters(&rendered);
+
+    assert_eq!(rendered_chapters[0], before_chapters[0]);
+    assert_eq!(
+        rendered_chapters[1].path.as_deref(),
+        Some(Path::new("config/runtime.yaml.md"))
+    );
+    assert!(
+        rendered_chapters[1]
+            .content
+            .contains("<h1>Registered YAML</h1>")
+    );
+    assert!(rendered_chapters[1].content.contains("enabled"));
+    assert!(rendered_chapters[1].content.contains("true"));
+}
+
+#[test]
+fn render_admits_only_exact_lowercase_structured_source_extensions() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Lowercase YML",
+            "enabled: true\n",
+            "config/runtime.yml",
+            "config/runtime.yml",
+        )
+        .into(),
+        chapter(
+            "Uppercase YAML sentinel",
+            "not: [valid",
+            "config/runtime.YAML",
+            "../ignored.md",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
+
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    )
+    .unwrap();
+    let before_chapters = chapters(&before);
+    let rendered_chapters = chapters(&rendered);
+
+    assert_eq!(
+        rendered_chapters[0].path.as_deref(),
+        Some(Path::new("config/runtime.yml.md"))
+    );
+    assert!(
+        rendered_chapters[0]
+            .content
+            .contains("<h1>Lowercase YML</h1>")
+    );
+    assert_eq!(rendered_chapters[1], before_chapters[1]);
+}
+
+#[test]
+fn render_reports_missing_route_metadata_for_an_admitted_source() {
+    let temporary = tempfile::tempdir().unwrap();
+    let mut registered = chapter(
+        "Registered YAML",
+        "enabled: true\n",
+        "config/runtime.yaml",
+        "config/runtime.yaml",
+    );
+    registered.path = None;
+
+    let result = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        Book::new_with_items(vec![registered.into()]),
+    );
+
+    let error = result.expect_err("an admitted source without a logical path must fail");
+    let AppDiagnosticKind::RegisteredRoute { source_path } = error.kind() else {
+        panic!("expected a registered-route diagnostic, got {error}");
+    };
+    assert_eq!(source_path, Path::new("config/runtime.yaml"));
+}
+
+#[test]
+fn render_rejects_duplicate_registered_source_identities() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "First registration",
+            "first: true\n",
+            "shared.yaml",
+            "first.md",
+        )
+        .into(),
+        chapter(
+            "Second registration",
+            "second: true\n",
+            "shared.yaml",
+            "second.md",
+        )
+        .into(),
+    ]);
+
+    let result = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    );
+
+    let error = result.expect_err("duplicate registered source identities must fail");
+    let AppDiagnosticKind::DuplicateRegisteredSource {
+        first,
+        second,
+        additional,
+    } = error.kind()
+    else {
+        panic!("expected a duplicate-source diagnostic, got {error}");
+    };
+    assert_eq!(first.source_path(), Path::new("shared.yaml"));
+    assert_eq!(second.source_path(), Path::new("shared.yaml"));
+    assert_eq!(first.output_route(), Path::new("first.yaml.html"));
+    assert_eq!(second.output_route(), Path::new("second.yaml.html"));
+    assert!(additional.is_empty());
+}
+
+#[test]
+fn render_rejects_duplicate_registered_output_routes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "First registration",
+            "first: true\n",
+            "first.yaml",
+            "shared.md",
+        )
+        .into(),
+        chapter(
+            "Second registration",
+            "second: true\n",
+            "second.yaml",
+            "shared.md",
+        )
+        .into(),
+    ]);
+
+    let result = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    );
+
+    let error = result.expect_err("duplicate registered output routes must fail");
+    let AppDiagnosticKind::RegisteredRouteCollision {
+        first,
+        second,
+        additional,
+    } = error.kind()
+    else {
+        panic!("expected a registered-route collision, got {error}");
+    };
+    assert_eq!(first.source_path(), Path::new("first.yaml"));
+    assert_eq!(second.source_path(), Path::new("second.yaml"));
+    assert_eq!(first.output_route(), Path::new("shared.yaml.html"));
+    assert_eq!(second.output_route(), Path::new("shared.yaml.html"));
+    assert!(additional.is_empty());
+}
+
+#[test]
+fn render_projects_a_literal_md_segment_in_a_registered_structured_source() {
+    let temporary = tempfile::tempdir().unwrap();
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        Book::new_with_items(vec![
+            chapter(
+                "Guide configuration",
+                "enabled: true\n",
+                "guide.md.yaml",
+                "guide.md.yaml",
+            )
+            .into(),
+        ]),
+    )
+    .unwrap();
+    let rendered_chapter = chapters(&rendered)[0];
+
+    assert_eq!(
+        rendered_chapter.path.as_deref(),
+        Some(Path::new("guide.md.yaml.md"))
+    );
+    assert!(
+        rendered_chapter
+            .content
+            .contains("<h1>Guide configuration</h1>")
+    );
+    assert!(rendered_chapter.content.contains("enabled"));
+    assert!(rendered_chapter.content.contains("true"));
+}
+
+#[test]
+fn render_projects_registered_readme_sources_to_distinct_routes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "YAML README",
+            "kind: yaml-index\n",
+            "README.yaml",
+            "index.md",
+        )
+        .into(),
+        chapter(
+            "JSON README",
+            r#"{"kind":"json-index"}"#,
+            "README.json",
+            "index.md",
+        )
+        .into(),
+    ]);
+
+    let rendered = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    )
+    .unwrap();
+    let rendered_chapters = chapters(&rendered);
+
+    assert_eq!(
+        rendered_chapters[0].path.as_deref(),
+        Some(Path::new("index.yaml.md"))
+    );
+    assert_eq!(
+        rendered_chapters[1].path.as_deref(),
+        Some(Path::new("index.json.md"))
+    );
+}
+
+#[test]
+fn render_route_diagnostics_do_not_observe_ordinary_or_synthetic_sentinels() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Ordinary sentinel",
+            "ordinary Markdown",
+            "guide.md",
+            "../ordinary/index.md",
+        )
+        .into(),
+        generated_chapter(
+            "Synthetic sentinel",
+            "generated content",
+            "../../synthetic.md",
+        )
+        .into(),
+        chapter("First", "first: true\n", "first.yaml", "shared.md").into(),
+        chapter("Second", "second: true\n", "second.yaml", "shared.md").into(),
+    ]);
+
+    let error = render_book(
+        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
+        book,
+    )
+    .unwrap_err();
+
+    let AppDiagnosticKind::RegisteredRouteCollision {
+        first,
+        second,
+        additional,
+    } = error.kind()
+    else {
+        panic!("expected a registered-route collision, got {error}");
+    };
+    assert_eq!(first.source_path(), Path::new("first.yaml"));
+    assert_eq!(second.source_path(), Path::new("second.yaml"));
+    assert_eq!(first.output_route(), Path::new("shared.yaml.html"));
+    assert_eq!(second.output_route(), first.output_route());
+    assert!(additional.is_empty());
+}
+
+#[test]
 fn render_returns_a_core_diagnostic_when_a_later_structured_chapter_is_malformed() {
     let temporary = tempfile::tempdir().unwrap();
     let book = Book::new_with_items(vec![
@@ -311,42 +610,248 @@ fn rewrite_rewrites_nested_markdown_links_without_scanning_generated_html() {
 }
 
 #[test]
-fn rewrite_rejects_an_ambiguous_authored_alias() {
+fn rewrite_ignores_unusable_ordinary_route_metadata() {
     let temporary = tempfile::tempdir().unwrap();
-    let rendered = render_book(
-        &html_context(temporary.path(), "[book]\nsrc = \"chapters\"\n"),
-        Book::new_with_items(vec![
-            chapter("Guide", "[index](config/index.md)", "guide.md", "guide.md").into(),
-            chapter(
-                "YAML README",
-                "yaml-value: first\n",
-                "config/README.yaml",
-                "config/index.md",
-            )
-            .into(),
-            chapter(
-                "JSON README",
-                r#"{"json-value":"second"}"#,
-                "config/README.json",
-                "config/index.md",
-            )
-            .into(),
-        ]),
-    )
-    .unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Ordinary sentinel",
+            "[runtime](config/runtime.yaml)",
+            "guide.md",
+            "../test/index.md",
+        )
+        .into(),
+        chapter(
+            "Runtime",
+            "<section class=\"structured-document\"></section>",
+            "config/runtime.yaml",
+            "config/runtime.yaml.md",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
 
-    let error = rewrite_book_links(
+    let rewritten = rewrite_book_links(
         RewriteOptions::from_context(&html_context(
             temporary.path(),
             "[book]\nsrc = \"chapters\"\n",
         ))
         .unwrap(),
-        rendered,
+        book,
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(matches!(
-        error.kind(),
-        AppDiagnosticKind::AmbiguousAlias { .. }
-    ));
+    assert_eq!(rewritten, before);
+}
+
+#[test]
+fn rewrite_matches_a_direct_registered_structured_source() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Guide",
+            "[runtime](config/runtime.yaml)",
+            "guide.md",
+            "guide.md",
+        )
+        .into(),
+        chapter(
+            "Runtime",
+            "<section class=\"structured-document\"></section>",
+            "config/runtime.yaml",
+            "config/runtime.yaml.md",
+        )
+        .into(),
+    ]);
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        book,
+    )
+    .unwrap();
+
+    assert_eq!(
+        chapters(&rewritten)[0].content,
+        "[runtime](config/runtime.yaml.html)"
+    );
+}
+
+#[test]
+fn rewrite_leaves_unregistered_static_like_destinations_unchanged() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Guide",
+            "[json](static/data.json) [yaml](static/data.yaml)",
+            "guide.md",
+            "guide.md",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        book,
+    )
+    .unwrap();
+
+    assert_eq!(rewritten, before);
+}
+
+#[test]
+fn rewrite_skips_a_source_chapter_without_a_usable_relative_base() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        generated_chapter(
+            "Synthetic sentinel",
+            "[runtime](config/runtime.yaml)",
+            "/generated/index.md",
+        )
+        .into(),
+        chapter(
+            "Runtime",
+            "<section class=\"structured-document\"></section>",
+            "config/runtime.yaml",
+            "config/runtime.yaml.md",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        book,
+    )
+    .unwrap();
+
+    assert_eq!(rewritten, before);
+}
+
+#[test]
+fn rewrite_matches_direct_readme_sources_to_distinct_routes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Guide",
+            "[yaml](config/README.yaml) [json](config/README.json)",
+            "guide.md",
+            "guide.md",
+        )
+        .into(),
+        chapter(
+            "YAML README",
+            "<section class=\"structured-document\"></section>",
+            "config/README.yaml",
+            "config/index.yaml.md",
+        )
+        .into(),
+        chapter(
+            "JSON README",
+            "<section class=\"structured-document\"></section>",
+            "config/README.json",
+            "config/index.json.md",
+        )
+        .into(),
+    ]);
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        book,
+    )
+    .unwrap();
+
+    assert_eq!(
+        chapters(&rewritten)[0].content,
+        "[yaml](config/index.yaml.html) [json](config/index.json.html)"
+    );
+}
+
+#[test]
+fn rewrite_does_not_create_index_or_directory_aliases() {
+    let temporary = tempfile::tempdir().unwrap();
+    let book = Book::new_with_items(vec![
+        chapter(
+            "Guide",
+            "[index](config/index.md) [directory](config/)",
+            "guide.md",
+            "guide.md",
+        )
+        .into(),
+        chapter(
+            "YAML README",
+            "<section class=\"structured-document\"></section>",
+            "config/README.yaml",
+            "config/index.yaml.md",
+        )
+        .into(),
+    ]);
+    let before = book.clone();
+
+    let rewritten = rewrite_book_links(
+        RewriteOptions::from_context(&html_context(
+            temporary.path(),
+            "[book]\nsrc = \"chapters\"\n",
+        ))
+        .unwrap(),
+        book,
+    )
+    .unwrap();
+
+    assert_eq!(rewritten, before);
+}
+
+#[test]
+fn rewrite_reports_unusable_route_metadata_for_a_registered_target() {
+    let temporary = tempfile::tempdir().unwrap();
+
+    for target_path in [None, Some(PathBuf::from("config/runtime.yaml"))] {
+        let mut target = chapter(
+            "Runtime",
+            "<section class=\"structured-document\"></section>",
+            "config/runtime.yaml",
+            "config/runtime.yaml.md",
+        );
+        target.path = target_path;
+        let book = Book::new_with_items(vec![
+            chapter(
+                "Guide",
+                "[runtime](config/runtime.yaml)",
+                "guide.md",
+                "guide.md",
+            )
+            .into(),
+            target.into(),
+        ]);
+
+        let error = rewrite_book_links(
+            RewriteOptions::from_context(&html_context(
+                temporary.path(),
+                "[book]\nsrc = \"chapters\"\n",
+            ))
+            .unwrap(),
+            book,
+        )
+        .unwrap_err();
+
+        let AppDiagnosticKind::RegisteredRoute { source_path } = error.kind() else {
+            panic!("expected a registered-route diagnostic, got {error}");
+        };
+        assert_eq!(source_path, Path::new("config/runtime.yaml"));
+    }
 }

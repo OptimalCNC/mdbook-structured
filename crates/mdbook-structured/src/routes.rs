@@ -1,34 +1,25 @@
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
-use mdbook_core::book::Book;
+use mdbook_core::book::{Book, BookItem};
 use mdbook_structured_core::StructuredFormat;
 
-use crate::diagnostic::{
-    AppDiagnostic, AppDiagnosticKind, ChapterDiagnosticFact, MdBookPathHazardFact,
-    RouteCollisionGroup,
-};
+use crate::diagnostic::{AppDiagnostic, AppDiagnosticKind, RegisteredRouteFact};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ChapterOrdinal(usize);
+pub(crate) struct ChapterOrdinal(usize);
 
 impl ChapterOrdinal {
     pub(crate) fn from_traversal_index(index: usize) -> Self {
         Self(index)
     }
-
-    pub fn get(self) -> usize {
-        self.0
-    }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct LogicalChapterPath(PathBuf);
+pub(crate) struct LogicalChapterPath(PathBuf);
 
 impl LogicalChapterPath {
-    pub fn try_from_path(path: &Path) -> Result<Self, AppDiagnostic> {
+    pub(crate) fn try_from_path(path: &Path) -> Result<Self, ()> {
         let mut normalized = PathBuf::new();
 
         for component in path.components() {
@@ -36,150 +27,37 @@ impl LogicalChapterPath {
                 Component::CurDir => {}
                 Component::Normal(component) => normalized.push(component),
                 Component::ParentDir if normalized.pop() => {}
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(invalid_logical_path(path));
-                }
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return Err(()),
             }
         }
 
         if normalized.as_os_str().is_empty() {
-            return Err(invalid_logical_path(path));
+            return Err(());
         }
 
         Ok(Self(normalized))
     }
 
-    pub fn as_path(&self) -> &Path {
+    pub(crate) fn as_path(&self) -> &Path {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct OutputRoute(PathBuf);
+pub(crate) struct OutputRoute(PathBuf);
 
 impl OutputRoute {
     fn from_projected_path(path: PathBuf) -> Self {
         Self(path)
     }
 
-    pub fn as_path(&self) -> &Path {
+    pub(crate) fn as_path(&self) -> &Path {
         &self.0
-    }
-
-    fn slash_form(&self) -> String {
-        self.0.to_string_lossy().replace('\\', "/")
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChapterTarget {
-    source_path: Option<LogicalChapterPath>,
-    output_route: OutputRoute,
-}
-
-impl ChapterTarget {
-    pub fn source_path(&self) -> Option<&LogicalChapterPath> {
-        self.source_path.as_ref()
-    }
-
-    pub fn output_route(&self) -> &OutputRoute {
-        &self.output_route
-    }
-}
-
-pub struct LinkRouteMap {
-    exact: BTreeMap<LogicalChapterPath, ChapterTarget>,
-    aliases: BTreeMap<LogicalChapterPath, Vec<ChapterTarget>>,
-}
-
-pub enum LinkResolution<'a> {
-    Exact(&'a ChapterTarget),
-    UniqueAlias(&'a ChapterTarget),
-    Ambiguous(&'a [ChapterTarget]),
-    Missing,
-}
-
-impl LinkRouteMap {
-    pub fn from_book(book: &Book) -> Result<Self, AppDiagnostic> {
-        let mut exact = BTreeMap::new();
-        let mut pending_aliases = Vec::new();
-
-        for chapter in book.chapters() {
-            let logical_path = chapter
-                .path
-                .as_deref()
-                .ok_or_else(|| invalid_logical_path(Path::new("")))?;
-            let logical_path = LogicalChapterPath::try_from_path(logical_path)?;
-            let source_path = chapter
-                .source_path
-                .as_deref()
-                .map(LogicalChapterPath::try_from_path)
-                .transpose()?;
-            let output_route =
-                OutputRoute::from_projected_path(logical_path.as_path().with_extension("html"));
-            let target = ChapterTarget {
-                source_path: source_path.clone(),
-                output_route,
-            };
-
-            if let Some(source_path) = &source_path {
-                exact.insert(source_path.clone(), target.clone());
-            }
-
-            let index_alias_path = source_path
-                .as_ref()
-                .and_then(|source_path| readme_index_alias_path(source_path, &logical_path));
-            let is_render_generated_shim = source_path.as_ref().is_some_and(|source_path| {
-                is_render_generated_structured_shim(source_path, &logical_path)
-            });
-
-            if source_path.is_none() || (index_alias_path.is_none() && !is_render_generated_shim) {
-                exact.insert(logical_path, target.clone());
-            }
-
-            if let (Some(source_path), Some(index_alias_path)) = (source_path, index_alias_path) {
-                pending_aliases.push((source_path, index_alias_path, target));
-            }
-        }
-
-        let mut aliases = BTreeMap::<LogicalChapterPath, Vec<ChapterTarget>>::new();
-        for (_source_path, index_alias_path, target) in pending_aliases {
-            aliases
-                .entry(index_alias_path.clone())
-                .or_default()
-                .push(target.clone());
-            if let Some(parent) = index_alias_path
-                .as_path()
-                .parent()
-                .filter(|path| !path.as_os_str().is_empty())
-            {
-                aliases
-                    .entry(LogicalChapterPath::try_from_path(parent)?)
-                    .or_default()
-                    .push(target);
-            }
-        }
-
-        Ok(Self { exact, aliases })
-    }
-
-    pub fn resolve(&self, path: &LogicalChapterPath) -> LinkResolution<'_> {
-        if let Some(target) = self.exact.get(path) {
-            return LinkResolution::Exact(target);
-        }
-
-        match self.aliases.get(path) {
-            Some(candidates) if candidates.len() == 1 => {
-                LinkResolution::UniqueAlias(&candidates[0])
-            }
-            Some(candidates) => LinkResolution::Ambiguous(candidates),
-            None => LinkResolution::Missing,
-        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StructuredExtension {
+enum StructuredExtension {
     Json,
     Yaml,
     Yml,
@@ -202,296 +80,324 @@ impl StructuredExtension {
             Self::Yml => "yml",
         }
     }
-}
 
-fn is_render_generated_structured_shim(
-    source_path: &LogicalChapterPath,
-    logical_path: &LogicalChapterPath,
-) -> bool {
-    let Some(extension) = StructuredExtension::from_path(source_path.as_path()) else {
-        return false;
-    };
-    let mut projected_path = source_path.as_path().to_owned();
-    projected_path.set_extension(format!("{}.md", extension.as_str()));
-    logical_path.as_path() == projected_path
-}
-
-fn readme_index_alias_path(
-    source_path: &LogicalChapterPath,
-    logical_path: &LogicalChapterPath,
-) -> Option<LogicalChapterPath> {
-    let stem = source_path.as_path().file_stem()?.to_str()?;
-    if !stem.eq_ignore_ascii_case("readme") {
-        return None;
-    }
-
-    let index_alias_path = LogicalChapterPath::try_from_path(
-        &source_path
-            .as_path()
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .join("index.md"),
-    )
-    .ok()?;
-    let expected_logical_path = match StructuredExtension::from_path(source_path.as_path()) {
-        Some(extension) => {
-            let mut projected_path = index_alias_path.as_path().to_owned();
-            projected_path.set_extension(format!("{}.md", extension.as_str()));
-            projected_path
+    fn format(self) -> StructuredFormat {
+        match self {
+            Self::Json => StructuredFormat::Json,
+            Self::Yaml | Self::Yml => StructuredFormat::Yaml,
         }
-        None => index_alias_path.as_path().to_owned(),
-    };
-
-    (logical_path.as_path() == expected_logical_path).then_some(index_alias_path)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StructuredSource {
-    source_path: PathBuf,
+struct StructuredSource {
+    source_path: LogicalChapterPath,
     extension: StructuredExtension,
 }
 
 impl StructuredSource {
-    fn from_source_path(source_path: &Path) -> Option<Self> {
-        Some(Self {
-            source_path: source_path.to_owned(),
-            extension: StructuredExtension::from_path(source_path)?,
-        })
+    fn admit(source_path: &Path) -> Result<Option<Self>, AppDiagnostic> {
+        let Some(extension) = StructuredExtension::from_path(source_path) else {
+            return Ok(None);
+        };
+
+        let source_path = LogicalChapterPath::try_from_path(source_path).map_err(|()| {
+            invalid_registered_route(source_path, "invalid registered source identity")
+        })?;
+        Ok(Some(Self {
+            source_path,
+            extension,
+        }))
     }
 
-    pub fn source_path(&self) -> &Path {
+    fn source_path(&self) -> &Path {
+        self.source_path.as_path()
+    }
+
+    fn source_identity(&self) -> &LogicalChapterPath {
         &self.source_path
     }
 
-    pub fn extension(&self) -> StructuredExtension {
+    fn extension(&self) -> StructuredExtension {
         self.extension
     }
 
-    pub fn format(&self) -> StructuredFormat {
-        match self.extension {
-            StructuredExtension::Json => StructuredFormat::Json,
-            StructuredExtension::Yaml | StructuredExtension::Yml => StructuredFormat::Yaml,
-        }
+    fn format(&self) -> StructuredFormat {
+        self.extension.format()
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectedChapter {
-    ordinal: ChapterOrdinal,
-    source_path: Option<PathBuf>,
-    structured_source: Option<StructuredSource>,
-    original_logical_path: LogicalChapterPath,
+pub(crate) struct RegisteredRenderRoute {
+    source: StructuredSource,
     transformed_logical_path: LogicalChapterPath,
     output_route: OutputRoute,
 }
 
-impl ProjectedChapter {
-    pub fn ordinal(&self) -> ChapterOrdinal {
-        self.ordinal
+impl RegisteredRenderRoute {
+    pub(crate) fn format(&self) -> StructuredFormat {
+        self.source.format()
     }
 
-    pub fn source_path(&self) -> Option<&Path> {
-        self.source_path.as_deref()
+    pub(crate) fn source_path(&self) -> &Path {
+        self.source.source_path()
     }
 
-    pub fn structured_source(&self) -> Option<&StructuredSource> {
-        self.structured_source.as_ref()
-    }
-
-    pub fn original_logical_path(&self) -> &LogicalChapterPath {
-        &self.original_logical_path
-    }
-
-    pub fn transformed_logical_path(&self) -> &LogicalChapterPath {
+    pub(crate) fn transformed_logical_path(&self) -> &LogicalChapterPath {
         &self.transformed_logical_path
     }
+}
 
-    pub fn output_route(&self) -> &OutputRoute {
-        &self.output_route
+pub(crate) struct RegisteredRenderRoutes {
+    by_ordinal: BTreeMap<ChapterOrdinal, RegisteredRenderRoute>,
+}
+
+impl RegisteredRenderRoutes {
+    pub(crate) fn from_book(book: &Book) -> Result<Self, AppDiagnostic> {
+        let mut by_ordinal = BTreeMap::new();
+        let mut traversal_index = 0;
+        collect_registered_render_routes(&book.items, &mut traversal_index, &mut by_ordinal)?;
+        validate_registered_pairs(
+            by_ordinal
+                .values()
+                .map(|route| (route.source.source_identity(), &route.output_route)),
+        )?;
+        Ok(Self { by_ordinal })
     }
+
+    pub(crate) fn get(&self, ordinal: ChapterOrdinal) -> Option<&RegisteredRenderRoute> {
+        self.by_ordinal.get(&ordinal)
+    }
+}
+
+fn collect_registered_render_routes(
+    items: &[BookItem],
+    traversal_index: &mut usize,
+    by_ordinal: &mut BTreeMap<ChapterOrdinal, RegisteredRenderRoute>,
+) -> Result<(), AppDiagnostic> {
+    for item in items {
+        let BookItem::Chapter(chapter) = item else {
+            continue;
+        };
+
+        let ordinal = ChapterOrdinal::from_traversal_index(*traversal_index);
+        *traversal_index += 1;
+
+        if let Some(source_path) = chapter.source_path.as_deref()
+            && let Some(source) = StructuredSource::admit(source_path)?
+        {
+            let logical_path = chapter.path.as_deref().ok_or_else(|| {
+                invalid_registered_route(source_path, "missing registered logical path")
+            })?;
+            let logical_path = LogicalChapterPath::try_from_path(logical_path).map_err(|()| {
+                invalid_registered_route(source_path, "invalid registered logical path")
+            })?;
+            let mut transformed_path = logical_path.as_path().to_owned();
+            transformed_path.set_extension(format!("{}.md", source.extension().as_str()));
+            let transformed_logical_path = LogicalChapterPath::try_from_path(&transformed_path)
+                .map_err(|()| {
+                    invalid_registered_route(source_path, "invalid registered route shim")
+                })?;
+            let output_route = OutputRoute::from_projected_path(
+                transformed_logical_path.as_path().with_extension("html"),
+            );
+            by_ordinal.insert(
+                ordinal,
+                RegisteredRenderRoute {
+                    source,
+                    transformed_logical_path,
+                    output_route,
+                },
+            );
+        }
+
+        collect_registered_render_routes(&chapter.sub_items, traversal_index, by_ordinal)?;
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RenderRoutePlan {
-    chapters: Vec<ProjectedChapter>,
+struct RegisteredTarget {
+    source_path: LogicalChapterPath,
+    output_route: OutputRoute,
 }
 
-impl RenderRoutePlan {
-    pub fn chapters(&self) -> &[ProjectedChapter] {
-        &self.chapters
-    }
-
-    pub fn chapter(&self, ordinal: ChapterOrdinal) -> Option<&ProjectedChapter> {
-        self.chapters.get(ordinal.get())
-    }
+pub(crate) struct StructuredTargetIndex {
+    by_source: BTreeMap<LogicalChapterPath, OutputRoute>,
 }
 
-pub fn preflight_render_routes(
-    book: &Book,
-    source_dir: &Path,
-) -> Result<RenderRoutePlan, AppDiagnostic> {
-    let mut projected_chapters = Vec::new();
-    let mut chapter_facts = Vec::new();
-
-    for (index, chapter) in book.chapters().enumerate() {
-        let logical_path = chapter
-            .path
-            .as_deref()
-            .ok_or_else(|| invalid_logical_path(Path::new("")))?;
-        let original_logical_path = LogicalChapterPath::try_from_path(logical_path)?;
-        let structured_source = chapter
-            .source_path
-            .as_deref()
-            .and_then(StructuredSource::from_source_path);
-
-        let transformed_logical_path = if let Some(source) = &structured_source {
-            let mut transformed = original_logical_path.as_path().to_owned();
-            transformed.set_extension(format!("{}.md", source.extension.as_str()));
-            LogicalChapterPath::try_from_path(&transformed)?
-        } else {
-            original_logical_path.clone()
-        };
-        let output_route = OutputRoute::from_projected_path(
-            transformed_logical_path.as_path().with_extension("html"),
-        );
-        let ordinal = ChapterOrdinal::from_traversal_index(index);
-
-        chapter_facts.push(ChapterDiagnosticFact::new(
-            chapter.name.clone(),
-            chapter
-                .source_path
-                .as_deref()
-                .map(LogicalChapterPath::try_from_path)
-                .transpose()?,
-            original_logical_path.clone(),
-        ));
-        projected_chapters.push(ProjectedChapter {
-            ordinal,
-            source_path: chapter.source_path.clone(),
-            structured_source,
-            original_logical_path,
-            transformed_logical_path,
-            output_route,
-        });
-    }
-
-    reject_route_collisions(&projected_chapters, &chapter_facts)?;
-    reject_mdbook_path_hazards(&projected_chapters)?;
-    reject_static_source_collisions(&projected_chapters, source_dir)?;
-
-    Ok(RenderRoutePlan {
-        chapters: projected_chapters,
-    })
-}
-
-fn reject_route_collisions(
-    projected_chapters: &[ProjectedChapter],
-    chapter_facts: &[ChapterDiagnosticFact],
-) -> Result<(), AppDiagnostic> {
-    let mut participants_by_route = BTreeMap::<OutputRoute, Vec<ChapterOrdinal>>::new();
-    for chapter in projected_chapters {
-        participants_by_route
-            .entry(chapter.output_route.clone())
-            .or_default()
-            .push(chapter.ordinal);
-    }
-
-    let mut groups = Vec::new();
-    for (route, participants) in participants_by_route {
-        if participants.len() < 2 {
-            continue;
-        }
-
-        let facts: Vec<_> = participants
+impl StructuredTargetIndex {
+    pub(crate) fn from_book(book: &Book) -> Result<Self, AppDiagnostic> {
+        let mut targets = Vec::new();
+        collect_structured_targets(&book.items, &mut targets)?;
+        validate_registered_pairs(
+            targets
+                .iter()
+                .map(|target| (&target.source_path, &target.output_route)),
+        )?;
+        let by_source = targets
             .into_iter()
-            .map(|ordinal| chapter_facts[ordinal.get()].clone())
+            .map(|target| (target.source_path, target.output_route))
             .collect();
-        groups.push(RouteCollisionGroup::new(
-            route,
-            facts[0].clone(),
-            facts[1].clone(),
-            facts[2..].to_vec(),
-        ));
+        Ok(Self { by_source })
     }
 
-    if groups.is_empty() {
-        return Ok(());
+    pub(crate) fn output_for_source(
+        &self,
+        source_path: &LogicalChapterPath,
+    ) -> Option<&OutputRoute> {
+        self.by_source.get(source_path)
     }
-
-    let first = groups.remove(0);
-    Err(AppDiagnostic::from_kind(
-        AppDiagnosticKind::RouteCollision {
-            first,
-            additional: groups,
-        },
-        "multiple chapters project to the same output route".to_owned(),
-    ))
 }
 
-fn reject_mdbook_path_hazards(
-    projected_chapters: &[ProjectedChapter],
+fn collect_structured_targets(
+    items: &[BookItem],
+    targets: &mut Vec<RegisteredTarget>,
 ) -> Result<(), AppDiagnostic> {
-    for chapter in projected_chapters {
-        if chapter.structured_source.is_some() && chapter.output_route.slash_form().contains(".md")
+    for item in items {
+        let BookItem::Chapter(chapter) = item else {
+            continue;
+        };
+
+        if let Some(source_path) = chapter.source_path.as_deref()
+            && let Some(source) = StructuredSource::admit(source_path)?
         {
-            return Err(AppDiagnostic::from_kind(
-                AppDiagnosticKind::MdBookPathHazard {
-                    fact: MdBookPathHazardFact::ProjectedRoute(chapter.output_route.clone()),
-                },
-                "a structured output route contains literal .md".to_owned(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn reject_static_source_collisions(
-    projected_chapters: &[ProjectedChapter],
-    source_dir: &Path,
-) -> Result<(), AppDiagnostic> {
-    for chapter in projected_chapters {
-        let static_source = source_dir.join(chapter.output_route.as_path());
-        let is_file = match fs::symlink_metadata(&static_source) {
-            Ok(metadata) if metadata.file_type().is_symlink() => fs::metadata(&static_source)
-                .map(|target| target.is_file())
-                .map_err(|error| {
-                    AppDiagnostic::from_kind(
-                        AppDiagnosticKind::Io {
-                            path: Some(static_source.clone()),
-                        },
-                        format!("failed to inspect an exact static-source symlink target: {error}"),
-                    )
-                })?,
-            Ok(metadata) => metadata.is_file(),
-            Err(error) if error.kind() == ErrorKind::NotFound => false,
-            Err(error) => {
-                return Err(AppDiagnostic::from_kind(
-                    AppDiagnosticKind::Io {
-                        path: Some(static_source),
-                    },
-                    format!("failed to inspect an exact static-source candidate: {error}"),
+            let rendered_path = chapter.path.as_deref().ok_or_else(|| {
+                invalid_registered_route(source_path, "missing registered route shim")
+            })?;
+            let rendered_path = LogicalChapterPath::try_from_path(rendered_path).map_err(|()| {
+                invalid_registered_route(source_path, "invalid registered route shim")
+            })?;
+            if !is_source_extension_shim(&rendered_path, source.extension()) {
+                return Err(invalid_registered_route(
+                    source_path,
+                    "invalid registered route shim",
                 ));
             }
-        };
-
-        if is_file && static_source.extension().and_then(|value| value.to_str()) != Some("md") {
-            return Err(AppDiagnostic::from_kind(
-                AppDiagnosticKind::StaticSourceCollision {
-                    output_route: chapter.output_route.clone(),
-                    static_source,
-                },
-                "a source file would be copied to a projected chapter route".to_owned(),
-            ));
+            targets.push(RegisteredTarget {
+                source_path: source.source_identity().clone(),
+                output_route: OutputRoute::from_projected_path(
+                    rendered_path.as_path().with_extension("html"),
+                ),
+            });
         }
+
+        collect_structured_targets(&chapter.sub_items, targets)?;
     }
 
     Ok(())
 }
 
-fn invalid_logical_path(path: &Path) -> AppDiagnostic {
+fn is_source_extension_shim(
+    rendered_path: &LogicalChapterPath,
+    source_extension: StructuredExtension,
+) -> bool {
+    rendered_path
+        .as_path()
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("md")
+        && rendered_path
+            .as_path()
+            .file_stem()
+            .and_then(|stem| Path::new(stem).extension())
+            .and_then(|extension| extension.to_str())
+            == Some(source_extension.as_str())
+}
+
+fn validate_registered_pairs<'a>(
+    pairs: impl Iterator<Item = (&'a LogicalChapterPath, &'a OutputRoute)>,
+) -> Result<(), AppDiagnostic> {
+    let mut facts_by_source = BTreeMap::<LogicalChapterPath, Vec<RegisteredRouteFact>>::new();
+    let mut facts_by_route = BTreeMap::<OutputRoute, Vec<RegisteredRouteFact>>::new();
+
+    for (source_path, output_route) in pairs {
+        let fact = RegisteredRouteFact::new(source_path.clone(), output_route.clone());
+        facts_by_source
+            .entry(source_path.clone())
+            .or_default()
+            .push(fact.clone());
+        facts_by_route
+            .entry(output_route.clone())
+            .or_default()
+            .push(fact);
+    }
+
+    if let Some(conflict) = facts_by_source
+        .into_values()
+        .find_map(RegisteredPairConflict::from_facts)
+    {
+        return Err(pair_conflict(
+            conflict,
+            |first, second, additional| AppDiagnosticKind::DuplicateRegisteredSource {
+                first,
+                second,
+                additional,
+            },
+            "multiple registered routes use the same structured source identity",
+        ));
+    }
+
+    if let Some(conflict) = facts_by_route
+        .into_values()
+        .find_map(RegisteredPairConflict::from_facts)
+    {
+        return Err(pair_conflict(
+            conflict,
+            |first, second, additional| AppDiagnosticKind::RegisteredRouteCollision {
+                first,
+                second,
+                additional,
+            },
+            "multiple registered structured sources project to the same output route",
+        ));
+    }
+
+    Ok(())
+}
+
+struct RegisteredPairConflict {
+    first: RegisteredRouteFact,
+    second: RegisteredRouteFact,
+    additional: Vec<RegisteredRouteFact>,
+}
+
+impl RegisteredPairConflict {
+    fn from_facts(facts: Vec<RegisteredRouteFact>) -> Option<Self> {
+        let mut facts = facts.into_iter();
+        let first = facts.next()?;
+        let second = facts.next()?;
+        Some(Self {
+            first,
+            second,
+            additional: facts.collect(),
+        })
+    }
+}
+
+fn pair_conflict(
+    conflict: RegisteredPairConflict,
+    kind: impl FnOnce(
+        RegisteredRouteFact,
+        RegisteredRouteFact,
+        Vec<RegisteredRouteFact>,
+    ) -> AppDiagnosticKind,
+    detail: &str,
+) -> AppDiagnostic {
+    let RegisteredPairConflict {
+        first,
+        second,
+        additional,
+    } = conflict;
+    AppDiagnostic::from_kind(kind(first, second, additional), detail.to_owned())
+}
+
+fn invalid_registered_route(source_path: &Path, detail: &str) -> AppDiagnostic {
     AppDiagnostic::from_kind(
-        AppDiagnosticKind::Configuration { key: None },
-        format!("invalid mdBook-relative chapter path: {}", path.display()),
+        AppDiagnosticKind::RegisteredRoute {
+            source_path: source_path.to_owned(),
+        },
+        format!("{detail}: {}", source_path.display()),
     )
 }

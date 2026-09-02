@@ -33,8 +33,6 @@ fn stock_mdbook_build_preserves_routes_links_and_semantics() {
         ("JSON README direct", "config/index.json.html"),
         ("Exact config index", "config/index.html"),
         ("Single README direct", "single/index.yaml.html"),
-        ("Single index alias", "single/index.yaml.html"),
-        ("Single directory alias", "single/index.yaml.html"),
         ("Runtime from include", "config/runtime.yaml.html"),
     ] {
         assert_link(&links, text, href);

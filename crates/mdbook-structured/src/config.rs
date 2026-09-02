@@ -1,5 +1,3 @@
-use std::path::{Path, PathBuf};
-
 use mdbook_preprocessor::PreprocessorContext;
 use mdbook_structured_core::{HtmlRenderOptions, Limits};
 use serde::{Deserialize, de::DeserializeOwned};
@@ -8,7 +6,6 @@ use crate::{AppDiagnostic, AppDiagnosticKind};
 
 pub struct HtmlPreprocessorContext {
     context: PreprocessorContext,
-    source_dir: PathBuf,
 }
 
 impl HtmlPreprocessorContext {
@@ -22,15 +19,7 @@ impl HtmlPreprocessorContext {
             ));
         }
 
-        let source_dir = context.root.join(&context.config.book.src);
-        Ok(Self {
-            context,
-            source_dir,
-        })
-    }
-
-    pub(crate) fn source_dir(&self) -> &Path {
-        &self.source_dir
+        Ok(Self { context })
     }
 }
 

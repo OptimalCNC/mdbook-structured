@@ -1,5 +1,5 @@
 use std::fmt::{self, Display, Formatter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use mdbook_structured_core::{Diagnostic, DiagnosticCategory};
 
@@ -11,96 +11,21 @@ pub enum AppDiagnosticCategory {
     Configuration,
     Protocol,
     UnsupportedRenderer,
-    RouteCollision,
-    StaticSourceCollision,
-    MdBookPathHazard,
-    AmbiguousAlias,
-    MixedReferenceUse,
+    RegisteredRoute,
+    DuplicateRegisteredSource,
+    RegisteredRouteCollision,
+    MatchedReferencePathHazard,
     InstallConflict,
     Io,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChapterDiagnosticFact {
-    chapter_name: String,
-    source_path: Option<LogicalChapterPath>,
-    logical_path: LogicalChapterPath,
-}
-
-impl ChapterDiagnosticFact {
-    pub(crate) fn new(
-        chapter_name: String,
-        source_path: Option<LogicalChapterPath>,
-        logical_path: LogicalChapterPath,
-    ) -> Self {
-        Self {
-            chapter_name,
-            source_path,
-            logical_path,
-        }
-    }
-
-    pub fn chapter_name(&self) -> &str {
-        &self.chapter_name
-    }
-
-    pub fn source_path(&self) -> Option<&LogicalChapterPath> {
-        self.source_path.as_ref()
-    }
-
-    pub fn logical_path(&self) -> &LogicalChapterPath {
-        &self.logical_path
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RouteCollisionGroup {
-    output_route: OutputRoute,
-    first_chapter: ChapterDiagnosticFact,
-    second_chapter: ChapterDiagnosticFact,
-    additional_chapters: Vec<ChapterDiagnosticFact>,
-}
-
-impl RouteCollisionGroup {
-    pub(crate) fn new(
-        output_route: OutputRoute,
-        first_chapter: ChapterDiagnosticFact,
-        second_chapter: ChapterDiagnosticFact,
-        additional_chapters: Vec<ChapterDiagnosticFact>,
-    ) -> Self {
-        Self {
-            output_route,
-            first_chapter,
-            second_chapter,
-            additional_chapters,
-        }
-    }
-
-    pub fn output_route(&self) -> &OutputRoute {
-        &self.output_route
-    }
-
-    pub fn first_chapter(&self) -> &ChapterDiagnosticFact {
-        &self.first_chapter
-    }
-
-    pub fn second_chapter(&self) -> &ChapterDiagnosticFact {
-        &self.second_chapter
-    }
-
-    pub fn additional_chapters(&self) -> &[ChapterDiagnosticFact] {
-        &self.additional_chapters
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AliasCandidateFact {
+pub struct RegisteredRouteFact {
     source_path: LogicalChapterPath,
     output_route: OutputRoute,
 }
 
-impl AliasCandidateFact {
-    #[allow(dead_code)]
+impl RegisteredRouteFact {
     pub(crate) fn new(source_path: LogicalChapterPath, output_route: OutputRoute) -> Self {
         Self {
             source_path,
@@ -108,19 +33,13 @@ impl AliasCandidateFact {
         }
     }
 
-    pub fn source_path(&self) -> &LogicalChapterPath {
-        &self.source_path
+    pub fn source_path(&self) -> &Path {
+        self.source_path.as_path()
     }
 
-    pub fn output_route(&self) -> &OutputRoute {
-        &self.output_route
+    pub fn output_route(&self) -> &Path {
+        self.output_route.as_path()
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MdBookPathHazardFact {
-    ProjectedRoute(OutputRoute),
-    RewrittenDestination(String),
 }
 
 #[derive(Debug)]
@@ -133,26 +52,21 @@ pub enum AppDiagnosticKind {
     UnsupportedRenderer {
         renderer: String,
     },
-    RouteCollision {
-        first: RouteCollisionGroup,
-        additional: Vec<RouteCollisionGroup>,
+    RegisteredRoute {
+        source_path: PathBuf,
     },
-    StaticSourceCollision {
-        output_route: OutputRoute,
-        static_source: PathBuf,
+    DuplicateRegisteredSource {
+        first: RegisteredRouteFact,
+        second: RegisteredRouteFact,
+        additional: Vec<RegisteredRouteFact>,
     },
-    MdBookPathHazard {
-        fact: MdBookPathHazardFact,
+    RegisteredRouteCollision {
+        first: RegisteredRouteFact,
+        second: RegisteredRouteFact,
+        additional: Vec<RegisteredRouteFact>,
     },
-    AmbiguousAlias {
-        authored_path: LogicalChapterPath,
-        first: AliasCandidateFact,
-        second: AliasCandidateFact,
-        additional: Vec<AliasCandidateFact>,
-    },
-    MixedReferenceUse {
-        reference_label: String,
-        destination: String,
+    MatchedReferencePathHazard {
+        rewritten_destination: String,
     },
     InstallConflict {
         path: PathBuf,
@@ -190,13 +104,16 @@ impl AppDiagnostic {
             AppDiagnosticKind::UnsupportedRenderer { .. } => {
                 AppDiagnosticCategory::UnsupportedRenderer
             }
-            AppDiagnosticKind::RouteCollision { .. } => AppDiagnosticCategory::RouteCollision,
-            AppDiagnosticKind::StaticSourceCollision { .. } => {
-                AppDiagnosticCategory::StaticSourceCollision
+            AppDiagnosticKind::RegisteredRoute { .. } => AppDiagnosticCategory::RegisteredRoute,
+            AppDiagnosticKind::DuplicateRegisteredSource { .. } => {
+                AppDiagnosticCategory::DuplicateRegisteredSource
             }
-            AppDiagnosticKind::MdBookPathHazard { .. } => AppDiagnosticCategory::MdBookPathHazard,
-            AppDiagnosticKind::AmbiguousAlias { .. } => AppDiagnosticCategory::AmbiguousAlias,
-            AppDiagnosticKind::MixedReferenceUse { .. } => AppDiagnosticCategory::MixedReferenceUse,
+            AppDiagnosticKind::RegisteredRouteCollision { .. } => {
+                AppDiagnosticCategory::RegisteredRouteCollision
+            }
+            AppDiagnosticKind::MatchedReferencePathHazard { .. } => {
+                AppDiagnosticCategory::MatchedReferencePathHazard
+            }
             AppDiagnosticKind::InstallConflict { .. } => AppDiagnosticCategory::InstallConflict,
             AppDiagnosticKind::Io { .. } => AppDiagnosticCategory::Io,
         }
