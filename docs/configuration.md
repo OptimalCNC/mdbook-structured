@@ -41,18 +41,22 @@ are preserved. The installer never edits `book.toml`.
 
 ## What changes at build time
 
-Listed `.json`, `.yaml`, and `.yml` chapters are transformed into structured
-HTML. Other chapters and unlisted source files are copied by mdBook unchanged.
-The source remains authoritative on disk.
+Registered `.json`, `.yaml`, and `.yml` chapters are transformed into
+structured HTML, and parser-confirmed Markdown link destinations are rewritten
+only when they resolve to one of those registered sources. The source path
+remains the registered identity and authoritative file on disk. Objects
+admitted by neither operation remain outside the preprocessor's semantic
+domain; mdBook owns their handling.
 
 ## Diagnostics and troubleshooting
 
-The preprocessor fails fast on malformed protocol input, parser errors,
-duplicate keys, route collisions, invalid options, and resource-limit
-violations. Diagnostics include the source filename and location when known.
+The preprocessor fails fast on malformed protocol input, invalid options, or a
+failure concerning a registered structured chapter, its generated route, or a
+matched structured reference. Structured diagnostics include the source
+filename and location when known.
 
 If a page is missing, verify that its source appears in `SUMMARY.md`, the
 renderer is `html`, and both registrations are present. If links do not point
-to `.json.html` or `.yaml.html` pages, keep the rewriter after `links` and link
-to the source path. For unsupported `mdbook test` behavior, use `mdbook build`
-with the stock HTML renderer instead.
+to `.json.html`, `.yaml.html`, or `.yml.html` pages, keep the rewriter after
+`links` and link to the source path. For unsupported `mdbook test` behavior,
+use `mdbook build` with the stock HTML renderer instead.

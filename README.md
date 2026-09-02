@@ -10,10 +10,13 @@
 `mdbook-structured-core` library parses JSON and YAML into a parser-neutral
 model and renders readable structured pages in mdBook's stock HTML output.
 
-- Listed `.json`, `.yaml`, and `.yml` chapters become extension-preserving HTML.
-- Source paths remain authoritative, with book-wide link rewriting.
+- Registered `.json`, `.yaml`, and `.yml` chapters become
+  extension-preserving HTML.
+- Source paths remain authoritative; matched Markdown links are rewritten to
+  registered structured pages.
 - Starter CSS and JavaScript can be installed without editing `book.toml`.
-- Fail-fast route, parser, and resource-limit diagnostics protect builds.
+- Scoped generated-route, parser, and resource-limit diagnostics protect
+  registered structured pages.
 
 ## Install and use
 
@@ -39,10 +42,11 @@ after = ["links"]
 renderers = ["html"]
 ```
 
-Then list JSON/YAML chapters in `SUMMARY.md`. See the [Configuration guide](https://optimalcnc.github.io/mdbook-structured/configuration.html) for resource limits and asset registration.
+Then list `.json`, `.yaml`, or `.yml` chapters in `SUMMARY.md`. See the [Configuration guide](https://optimalcnc.github.io/mdbook-structured/configuration.html) for resource limits and asset registration.
 
-Supported scope is listed JSON/YAML chapters and the stock HTML renderer;
-`mdbook test` is not a structured-book acceptance command in v1.
+Build-time transformation scope is registered structured chapters, Markdown
+links that match those chapters, and the stock HTML renderer; `mdbook test` is
+not a structured-book acceptance command in v1.
 
 ## Links
 

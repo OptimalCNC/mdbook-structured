@@ -83,46 +83,51 @@ styling is intentionally author-overridable.
 ## Preprocessor and mdBook integration
 
 The preprocessor is tested first with in-memory `Book` values. These tests
-assert typed protocol results: only eligible chapters change, `source_path` is
-preserved, structured logical paths gain the source-extension shim, unrelated
-chapters and metadata are untouched, projected chapter-route collisions and
-exact static-source conflicts are reported, and rewritten destinations follow
-the chapter map. Two structured README chapters with different source
-extensions but the same post-index logical path must project to distinct
-outputs. Direct source links to both must rewrite independently, and unused
-shared convenience aliases must not fail preprocessing. A separate case adds
-an actual `index.md` chapter at a shared alias destination and verifies that
-the exact chapter wins without ambiguity. Link rewriting is tested against the
-Markdown AST and spans, including reference definitions. Capability tests
+establish both admission gates and their typed results. Registration fixtures
+cover the exact lowercase extension discriminator, preservation of a
+registered chapter's `source_path`, its source-extension route shim, and
+diagnostics derived only from registered structured identities and generated
+routes. Structured-target fixtures establish that the target index contains
+only registered structured sources and that only parser-confirmed link
+destinations matching that index produce edits.
+
+Matched-reference tests use Markdown parser events and byte spans. They cover
+relative lexical resolution and preservation of query, fragment, title,
+percent or entity spelling, and surrounding bytes. A source without a usable
+relative base contributes no matched reference and no book-object diagnostic.
+Two registered README chapters with different source extensions but the same
+post-index logical path must project to distinct outputs, and direct source
+links to both must rewrite independently. A fixture may contain other book
+objects as a sentinel for accidental scope expansion, but it does not define
+behavior or an exhaustive test obligation for those objects. Capability tests
 exercise `render supports html` and `rewrite-links supports html`.
 
 One small mdBook build fixture verifies the actual ordering with `index`,
 `links`, includes, and the stock HTML renderer. It is inspected through parsed
 output paths, DOM links, and semantic probes rather than expected HTML files.
 It verifies `runtime.yaml.html` plus distinct `index.yaml.html` and
-`index.json.html` routes, direct source-path links to both README pages, a
-unique README/index/directory alias, and stock publication of the raw
-`runtime.yaml` file. The fixture includes a literal helper-looking value to
-verify render-before-links protection. A single end-to-end fixture proves
-wiring; it does not duplicate every core or renderer case.
+`index.json.html` routes and direct source-path links to both README pages. The
+fixture includes a matched reference introduced by an include and a literal
+helper-looking structured value to verify phase ordering. A single end-to-end
+fixture proves wiring; it does not duplicate every core or renderer case.
 
 ## High-value failures
 
 Negative tests are added only when they protect a critical semantic or
-security boundary. V1 covers a malformed registered source with
-location-bearing diagnostics, duplicate decoded keys, a parsed construct that
-cannot be projected losslessly, each resource-limit boundary, an exact
-projected-route collision, an exact static-source conflict, and a projected
-route or rewritten destination that stock mdBook would corrupt because it
-contains a literal `.md`. It also covers an authored convenience alias with
-multiple chapter candidates, which must fail without rejecting the same book
-when that alias is unused.
+security boundary after admission. V1 covers a malformed registered source
+with location-bearing diagnostics, duplicate decoded keys, a parsed construct
+that cannot be projected losslessly, each resource-limit boundary, missing
+route metadata for a registered chapter, and failure to produce the promised
+edit for a matched structured reference. Tests for any additional
+generated-route integrity rule are in scope only when the rule is defined
+entirely from registered source-to-route pairs.
 
 These tests do not duplicate every malformed syntax variant already covered
 by parser libraries or define an independent YAML behavior matrix. Assertions
-check error category, source path, location, and structured path rather than
-brittle prose. A new negative case is added when a regression, data-loss risk,
-or security requirement makes it valuable.
+check the error category and applicable admitted provenance, such as source
+identity, source location, or structured path, rather than brittle prose. A
+new negative case is added when a regression, data-loss risk, or security
+requirement makes it valuable.
 
 ## Installer
 
@@ -134,7 +139,9 @@ text is not a test oracle.
 
 ## Acceptance criterion
 
-Representative and generated valid documents render completely and in order;
-the stock mdBook build exposes the expected links and source provenance; the
-small set of critical invalid cases fails loudly; and style or markup
-refactoring does not require rewriting large snapshots.
+Representative and generated registered documents render completely and in
+order; matched structured references reach their generated routes with
+authored suffixes preserved; no build-time book-object diagnostic is derived
+from a non-admitted object; such diagnostics arise only from admitted
+structured chapters, their generated routes, and matched references; and style
+or markup refactoring does not require rewriting large snapshots.

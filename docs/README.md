@@ -1,8 +1,9 @@
 # Getting Started
 
-`mdbook-structured` is an external preprocessor for mdBook. Listed JSON and
-YAML chapters become structured HTML pages while mdBook retains its normal
-book structure, navigation, themes, search, and stock HTML renderer.
+`mdbook-structured` is an external preprocessor for mdBook. Chapters whose
+listed source paths have the exact lowercase extension `.json`, `.yaml`, or
+`.yml` become structured HTML pages while mdBook retains its normal book
+structure, navigation, themes, search, and stock HTML renderer.
 
 ## Prerequisites
 
@@ -53,13 +54,16 @@ The installer writes starter CSS and JavaScript only; it never edits
 
 ## Add structured chapters
 
-List a source file in `SUMMARY.md` and link to that source path, for example
-`[Runtime configuration](config/runtime.yaml)`. mdBook then publishes an
-extension-preserving page such as `config/runtime.yaml.html`.
+List a `.json`, `.yaml`, or `.yml` source in `SUMMARY.md` and link to that
+source path, for example `[Runtime configuration](config/runtime.yaml)`.
+`rewrite-links` edits the authored link destination when relative resolution
+matches that registered source, and mdBook publishes the extension-preserving
+page at `config/runtime.yaml.html`.
 
-Only chapters listed in `SUMMARY.md` are transformed. Unlisted files remain
-ordinary files, and `mdbook test` is not a structured-book acceptance command
-in v1 because it uses a different renderer.
+Registration comes only from chapter metadata supplied by mdBook; the
+preprocessor does not discover source files. `mdbook test` is not a
+structured-book acceptance command in v1 because it uses a different
+renderer.
 
 ## Further reading
 
