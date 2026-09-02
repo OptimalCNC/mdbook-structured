@@ -15,7 +15,9 @@ To find possible matches, the rewriter uses the Markdown parser to extract
 authored link-destination spans and uses the current chapter path as their
 relative base. Extraction alone does not admit a link destination. A link
 destination becomes a matched structured reference only when lexical relative
-resolution identifies a member of the structured target index.
+resolution identifies a member of the structured target index. If a source
+chapter cannot supply a usable relative base, it contributes no matched
+structured reference.
 
 For example:
 
