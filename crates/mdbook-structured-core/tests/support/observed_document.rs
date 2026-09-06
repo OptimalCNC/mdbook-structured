@@ -304,9 +304,7 @@ fn required_direct_summary<'a>(element: ElementRef<'a>, owner: &str) -> ElementR
 }
 
 fn observe_container_label(summary: ElementRef<'_>) -> Option<ObservedLabel> {
-    let labels = direct_element_children(summary)
-        .filter(|child| child.value().attr("data-structured-label").is_some())
-        .collect::<Vec<_>>();
+    let labels = select_element(summary, "[data-structured-label]");
     assert!(labels.len() <= 1, "container can have at most one label");
     labels.first().copied().map(observe_label)
 }

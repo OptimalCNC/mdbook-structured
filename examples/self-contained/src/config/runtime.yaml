@@ -14,8 +14,16 @@ service:
 features:
   - name: search
     enabled: true
+    description: Search across documentation.
+    settings:
+      max-results: 20
+      highlight: true
   - name: diagnostics
     enabled: false
+    description: Collect diagnostic reports.
+    settings:
+      retention-days: 7
+      verbose: false
 metadata:
   null-value: null
   literal: "{{#include missing.md}}"

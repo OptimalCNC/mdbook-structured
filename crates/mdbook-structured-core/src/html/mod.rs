@@ -1,7 +1,9 @@
+mod container;
 mod encode;
 
 use crate::{Node, NodeValue, StructuredDocument, StructuredFormat};
 
+use self::container::Container;
 use self::encode::{push_encoded_attribute, push_encoded_text};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,11 +105,9 @@ fn push_node(
         NodeValue::Mapping(entries) => {
             push_container_start(
                 output,
-                "mapping",
+                Container::Mapping(entries),
                 position,
                 depth,
-                entries.len(),
-                entries.iter().all(|entry| is_scalar(entry.value().value())),
                 options,
             );
             for entry in entries {
@@ -125,15 +125,7 @@ fn push_node(
             });
         }
         NodeValue::Sequence(items) => {
-            push_container_start(
-                output,
-                "sequence",
-                position,
-                depth,
-                items.len(),
-                items.iter().all(|item| is_scalar(item.value())),
-                options,
-            );
+            push_container_start(output, Container::Sequence(items), position, depth, options);
             for (index, item) in items.iter().enumerate() {
                 push_node(
                     output,
@@ -175,13 +167,14 @@ fn push_node(
 
 fn push_container_start(
     output: &mut String,
-    kind: &str,
+    container: Container<'_>,
     position: NodePosition<'_>,
     depth: usize,
-    immediate_child_count: usize,
-    scalar_only: bool,
     options: HtmlRenderOptions,
 ) {
+    let kind = container.kind();
+    let immediate_child_count = container.child_count();
+    let scalar_only = container.scalar_only();
     let label = match position {
         NodePosition::Root => {
             output.push_str("<div data-structured-node=\"");
@@ -206,9 +199,8 @@ fn push_container_start(
     if depth <= 2 && immediate_child_count <= options.large_container_threshold() {
         output.push_str(" open");
     }
-    output.push_str("><summary>");
-    push_label(output, label);
-    output.push_str("</summary>");
+    output.push('>');
+    container.push_summary(output, label);
 }
 
 fn is_scalar(node: &NodeValue) -> bool {

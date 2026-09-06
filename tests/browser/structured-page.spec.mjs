@@ -12,7 +12,11 @@ const yamlIndexUrl = pathToFileURL(
 function containerBySummary(page, summary) {
   return page
     .locator("details[data-structured-container] > summary")
-    .filter({ hasText: new RegExp(`^${summary}$`) })
+    .filter({
+      has: page.locator("[data-structured-label]", {
+        hasText: new RegExp(`^${summary}$`),
+      }),
+    })
     .locator("..");
 }
 
@@ -259,4 +263,117 @@ test("hard-break markers distinguish authored breaks from soft wrapping", async 
       "details[data-structured-original-source] [data-structured-line-break]",
     ),
   ).toHaveCount(0);
+});
+
+for (const width of [1280, 375]) {
+  test(`nested fields indent from their parent content at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    for (const url of [
+      runtimeUrl,
+      pathToFileURL(resolve("target/playwright-book/book/lists.yaml.html")).href,
+    ]) {
+      await page.goto(url);
+      await page.getByRole("button", { name: "Expand all", exact: true }).click();
+      const groups = await page.locator(
+        "details[data-structured-container][data-structured-group]",
+      ).evaluateAll((containers) => {
+        function rowContent(row) {
+          return row.querySelector(
+            ":scope > [data-structured-label], :scope > summary > [data-structured-label], :scope > summary [data-structured-preview]",
+          );
+        }
+        return containers.map((container) => {
+          const parent = rowContent(container);
+          const children = Array.from(container.children)
+            .filter((child) => child.hasAttribute("data-structured-node"))
+            .map(rowContent);
+          return {
+            label: parent.textContent,
+            parentStart: parent.getBoundingClientRect().x,
+            childStarts: children.map((child) => child.getBoundingClientRect().x),
+          };
+        });
+      });
+      expect(groups.length).toBeGreaterThan(0);
+      for (const { label, parentStart, childStarts } of groups) {
+        expectAligned(childStarts);
+        for (const start of childStarts) {
+          expect(start, `children of ${label}`).toBeGreaterThan(parentStart);
+        }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  });
+
+  test(`list previews preserve readable summaries and complete values at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(pathToFileURL(resolve("target/playwright-book/book/lists.yaml.html")).href);
+    const entries = containerBySummary(page, "entries");
+    const items = entries.locator(":scope > details[data-structured-container]");
+    const first = items.first();
+    const summary = first.locator(":scope > summary");
+    await expect(entries.locator(":scope > summary > [data-structured-count]")).toHaveText("3 items");
+    await expectOpen(first, false);
+    await expect(summary.locator("[data-structured-preview-field]")).toHaveText([
+      "name: search",
+      "enabled: true",
+    ]);
+    await expect(summary.locator("[data-structured-preview]")).toBeVisible();
+    await expect(summary.locator("[data-structured-preview-more]")).toBeVisible();
+    await expect(summary.locator('[data-structured-label="index"]')).toHaveText("0");
+
+    const description = first.locator(":scope > [data-structured-node] > [data-structured-value]")
+      .filter({ hasText: "Search across documentation." });
+    await expect(description).not.toBeVisible();
+    await summary.focus();
+    await page.keyboard.press("Enter");
+    await expect(description).toBeVisible();
+    const settings = containerBySummary(page, "settings");
+    await openContainer(settings);
+    await openContainer(containerBySummary(page, "nested"));
+    await expect(settings.locator("[data-structured-preview-field]")).toHaveText(["name: leaf"]);
+
+    const mixed = containerBySummary(page, "mixed");
+    const starts = await renderedLabelStarts(mixed.locator(
+      ':scope > [data-structured-node="string"] > [data-structured-label="index"], :scope > details > summary [data-structured-preview]',
+    ));
+    expectAligned(starts);
+    const boxes = await summary.evaluate((element) => {
+      const preview = element.querySelector("[data-structured-preview]");
+      const index = element.querySelector('[data-structured-label="index"]');
+      return {
+        previewRight: preview.getBoundingClientRect().right,
+        indexLeft: index.getBoundingClientRect().left,
+        indexRight: index.getBoundingClientRect().right,
+        summaryRight: element.getBoundingClientRect().right,
+      };
+    });
+    expect(boxes.indexLeft).toBeGreaterThan(boxes.previewRight);
+    expect(boxes.indexRight).toBeLessThanOrEqual(boxes.summaryRight);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    const longName = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-notifications\nsecond line";
+    const previewName = items.nth(2).locator('[data-structured-preview-value="string"]');
+    await expect(previewName).toHaveText(longName);
+    expect(await previewName.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await openContainer(items.nth(2));
+    const fullName = items.nth(2).locator(':scope > [data-structured-node="string"] > [data-structured-value]').first();
+    await expect(fullName).toBeVisible();
+    await expect(fullName).toHaveText(longName);
+  });
+}
+
+test("list previews and disclosures work without JavaScript", async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    await page.goto(pathToFileURL(resolve("target/playwright-book/book/lists.yaml.html")).href);
+    const first = containerBySummary(page, "entries").locator(":scope > details").first();
+    await expect(first.locator("[data-structured-preview]").first()).toBeVisible();
+    await first.locator(":scope > summary").click();
+    await expect(first.locator(":scope > [data-structured-node] > [data-structured-value]")
+      .filter({ hasText: "Search across documentation." })).toBeVisible();
+  } finally {
+    await context.close();
+  }
 });

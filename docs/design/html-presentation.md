@@ -36,6 +36,14 @@ at model depth two start open, while deeper containers start closed. A nested
 container with more than 100 immediate children starts closed, even at depth
 two.
 
+Sequence summaries include their item count. A mapping inside a sequence shows
+its first two immediate scalar fields in source order as a compact preview,
+with its positional index shown as muted metadata at the right. An ellipsis
+indicates additional fields. Items without scalar fields show their field or
+item count instead. Preview keys and values may be clipped visually to keep
+rows compact; expanding an item reveals every field with its full value.
+Previews are generated at build time and remain available without JavaScript.
+
 At every model depth, each non-empty mapping or sequence group is classified
 from its immediate rendered model/DOM children, including children inside a
 closed disclosure. A mixed group has at least one foldable mapping or sequence
@@ -47,8 +55,9 @@ structural nesting indentation and one sibling label column. A nested
 container's summary remains a foldable row in its parent group, while its own
 children are classified separately. Empty containers have no child label group,
 so their existing disclosure behavior is preserved. The alignment anchor is the
-start of the decoded rendered label (a mapping key or sequence index), not the
-first visible glyph and not raw source indentation or quoting. The heading,
+start of the row's content: a decoded mapping key, a scalar item's sequence
+index, or a container item's preview. It is not the first visible glyph or raw
+source indentation or quoting. The heading,
 action buttons, and Original source disclosure are outside this data-row
 alignment system.
 

@@ -1,0 +1,16 @@
+entries:
+  - settings:
+      nested:
+        - name: leaf
+    name: search
+    enabled: true
+    description: Search across documentation.
+  - name: diagnostics
+    enabled: false
+  - name: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-notifications\nsecond line"
+    enabled: true
+mixed:
+  - plain
+  - name: compact
+    enabled: true
+  - []

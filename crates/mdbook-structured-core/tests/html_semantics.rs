@@ -350,6 +350,117 @@ fn rendered_group_metadata_classifies_immediate_children_and_empty_groups() {
 }
 
 #[test]
+fn list_previews_show_two_scalar_fields_in_source_order_and_preserve_full_items() {
+    let source = r#"{"entries":[
+      {"settings":{"nested":[{"name":"deep"}]},"enabled":false,"amount":1.2300e+04,"name":"later"},
+      {"name":"search","enabled":true},
+      {"nothing":null}
+    ]}"#;
+    let document = parse_json(source, "list-previews.json");
+    let rendered = render_structured_page("Lists", &document, HtmlRenderOptions::default());
+    let html = rendered_browser_html(&rendered);
+    let fields = Selector::parse("[data-structured-preview-field]").unwrap();
+    let key = Selector::parse("[data-structured-preview-key]").unwrap();
+    let value = Selector::parse("[data-structured-preview-value]").unwrap();
+    let previews = html
+        .select(&fields)
+        .map(|field| {
+            let key = field.select(&key).next().unwrap();
+            let value = field.select(&value).next().unwrap();
+            (
+                key.text().collect::<String>(),
+                value.value().attr("data-structured-preview-value").unwrap(),
+                value.text().collect::<String>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        previews,
+        vec![
+            ("enabled".into(), "boolean", "false".into()),
+            ("amount".into(), "number", "1.2300e+04".into()),
+            ("name".into(), "string", "deep".into()),
+            ("name".into(), "string", "search".into()),
+            ("enabled".into(), "boolean", "true".into()),
+            ("nothing".into(), "null", "null".into()),
+        ]
+    );
+    assert_eq!(
+        html.select(&Selector::parse("[data-structured-preview-more]").unwrap())
+            .count(),
+        1
+    );
+    element_with_text(&html, "[data-structured-count]", "3 items");
+    element_with_text(&html, "[data-structured-count]", "1 item");
+    element_with_text(&html, "[data-structured-value]", "later");
+    let observed = observe_rendered_html(&rendered);
+    assert_eq!(observed.original_source, source);
+    let ObservedNode::Mapping { children, .. } = observed.root else {
+        panic!("expected a mapping root");
+    };
+    let ObservedNode::Sequence { children, .. } = &children[0] else {
+        panic!("expected an entries sequence");
+    };
+    assert_eq!(children.len(), 3);
+    let ObservedNode::Mapping {
+        label,
+        open,
+        children,
+    } = &children[0]
+    else {
+        panic!("expected a mapping item");
+    };
+    assert_eq!(*label, Some(ObservedLabel::Index(0)));
+    assert!(!open);
+    assert_eq!(children.len(), 4);
+}
+
+#[test]
+fn list_previews_use_counts_when_items_have_no_scalar_fields() {
+    let source = r#"[{"nested":{}},{},[1,2],[],"plain"]"#;
+    let document = parse_json(source, "list-counts.json");
+    let rendered = render_structured_page("Counts", &document, HtmlRenderOptions::default());
+    let html = rendered_browser_html(&rendered);
+    let previews = html
+        .select(&Selector::parse("[data-structured-preview]").unwrap())
+        .map(|preview| preview.text().collect::<String>())
+        .collect::<Vec<_>>();
+    assert_eq!(previews, ["1 field", "0 fields", "2 items", "0 items"]);
+    let observed = observe_rendered_html(&rendered);
+    let ObservedNode::Sequence {
+        label, children, ..
+    } = observed.root
+    else {
+        panic!("expected a sequence root");
+    };
+    assert_eq!(label, None);
+    assert_eq!(children.len(), 5);
+    assert_eq!(observed.original_source, source);
+}
+
+#[test]
+fn list_previews_encode_text_and_retain_empty_and_multiline_values() {
+    let source = r#"[{"<key &>":"{{#include missing.md}}\n世界","":""}]"#;
+    let document = parse_json(source, "list-text.json");
+    let rendered = render_structured_page("Text", &document, HtmlRenderOptions::default());
+    let html = rendered_browser_html(&rendered);
+    assert!(!rendered.as_str().contains("{{#include missing.md}}"));
+    element_with_text(&html, "[data-structured-preview-key]", "<key &>");
+    let value = element_with_text(
+        &html,
+        "[data-structured-preview-value=string]",
+        "{{#include missing.md}}\n世界",
+    );
+    assert_marked_breaks(value, "{{#include missing.md}}\n世界", &["\n"]);
+    assert_eq!(
+        html.select(&Selector::parse("[data-structured-preview-empty]").unwrap())
+            .count(),
+        2
+    );
+    assert_eq!(observe_rendered_html(&rendered).original_source, source);
+}
+
+#[test]
 fn rendered_strings_mark_hard_break_sequences_without_changing_text() {
     let document = parse_json(LINE_BREAKS_JSON, "line-breaks.json");
     let rendered = render_structured_page("Line breaks", &document, HtmlRenderOptions::default());
@@ -506,7 +617,13 @@ fn assert_container_group(
             let summary = direct_children(*container)
                 .find(|child| child.value().name() == "summary")
                 .expect("container must have a summary");
-            summary_text(summary) == label
+            summary
+                .select(&Selector::parse("[data-structured-label]").unwrap())
+                .next()
+                .unwrap()
+                .text()
+                .collect::<String>()
+                == label
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -525,10 +642,6 @@ fn assert_container_group(
 
 fn direct_children(element: ElementRef<'_>) -> impl Iterator<Item = ElementRef<'_>> {
     element.children().filter_map(ElementRef::wrap)
-}
-
-fn summary_text(element: ElementRef<'_>) -> String {
-    element.text().collect()
 }
 
 fn key_label(text: &str, empty_marker: bool) -> ObservedLabel {

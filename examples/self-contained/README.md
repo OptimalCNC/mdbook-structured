@@ -32,7 +32,8 @@ running, open the URL printed by mdBook to browse the example.
 
 - `src/config/runtime.yaml` shows mappings, sequences, scalar types, empty
   values, long and multiline strings, literal helper-like text, and the
-  original source view.
+  original source view. Its `features` list previews each item's name and
+  enabled state before expansion.
 - `src/mixed-top-level.yaml` alternates scalar and foldable fields at the data
   root so their presentation can be compared on one page.
 - `src/config/README.yaml` and `src/config/README.json` become distinct
