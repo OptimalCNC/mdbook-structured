@@ -61,8 +61,11 @@ source indentation or quoting. The heading,
 action buttons, and Original source disclosure are outside this data-row
 alignment system.
 
-The generated page includes controls to expand or collapse all containers on
-the active page. They do not affect other pages and do not persist state
+The generated page includes two outlined icon buttons below the chapter
+heading to expand or collapse all containers on the active page. Full action
+names are available to assistive technology and appear as labels on hover or
+keyboard focus; Escape dismisses the labels. The buttons have larger targets
+on touch devices. They do not affect other pages and do not persist state
 between visits.
 
 Keys and string values are decoded and displayed without surrounding quotes.

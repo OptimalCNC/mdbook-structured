@@ -34,26 +34,87 @@
 }
 
 .structured-document [data-structured-action] {
-  background: var(--sidebar-bg, #f6f8fa);
-  border: 1px solid var(--structured-border);
-  border-radius: 0.25rem;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg, #24292f) 3%, var(--bg, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--fg, #24292f) 32%, var(--bg, #ffffff));
+  border-radius: 4px;
   box-sizing: border-box;
-  color: var(--fg, #24292f);
+  color: color-mix(in srgb, var(--fg, #24292f) 85%, var(--bg, #ffffff));
   cursor: pointer;
-  display: inline-block;
+  display: inline-grid;
   font: inherit;
-  margin: 0 0.5rem 0.75rem 0;
-  max-inline-size: 100%;
-  overflow-wrap: anywhere;
-  padding: 0.25rem 0.6rem;
-  white-space: normal;
+  inline-size: 32px;
+  block-size: 32px;
+  margin-block: 0 12px;
+  margin-inline: 0 8px;
+  overflow: visible;
+  padding: 0;
+  place-items: center;
+  position: relative;
+  touch-action: manipulation;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  vertical-align: middle;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.structured-document [data-structured-action]:hover {
-  background: var(--theme-hover, var(--structured-hover));
+.structured-document [data-structured-action] > svg {
+  display: block;
+  inline-size: 16px;
+  block-size: 16px;
+  pointer-events: none;
 }
 
-.structured-document [data-structured-action]:focus-visible,
+@media (hover: hover) {
+  .structured-document [data-structured-action]:hover {
+    background: color-mix(in srgb, var(--fg, #24292f) 8%, var(--bg, #ffffff));
+    border-color: color-mix(in srgb, var(--fg, #24292f) 50%, var(--bg, #ffffff));
+    color: var(--fg, #24292f);
+  }
+}
+
+.structured-document [data-structured-action]:active {
+  background: color-mix(in srgb, var(--fg, #24292f) 14%, var(--bg, #ffffff));
+  border-color: color-mix(in srgb, var(--fg, #24292f) 60%, var(--bg, #ffffff));
+  color: var(--fg, #24292f);
+  transition: none;
+}
+
+.structured-document [data-structured-action]:focus-visible {
+  outline: 2px solid var(--links, var(--structured-focus));
+  outline-offset: 3px;
+}
+
+.structured-document [data-structured-tooltip] {
+  background: var(--fg, #24292f);
+  border: 1px solid color-mix(in srgb, var(--fg, #24292f) 32%, var(--bg, #ffffff));
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: var(--bg, #ffffff);
+  font: 12px/1.4 "Open Sans", sans-serif;
+  inset-inline-start: -1px;
+  inset-block-end: calc(100% + 7px);
+  opacity: 0;
+  padding: 5px 8px;
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  z-index: 200;
+}
+
+/* Keep the label reachable across the gap above its button. */
+.structured-document [data-structured-tooltip]::after {
+  content: "";
+  block-size: 9px;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  position: absolute;
+}
+
+.structured-document [data-structured-tooltip-open] > [data-structured-tooltip] {
+  opacity: 1;
+  visibility: visible;
+}
+
 .structured-document details[data-structured-container] > summary:focus-visible,
 .structured-document details[data-structured-original-source] > summary:focus-visible {
   outline: 2px solid var(--links, var(--structured-focus));
@@ -296,13 +357,38 @@
   white-space: pre-wrap;
 }
 
-@media (max-width: 44rem) {
+@media (any-pointer: coarse) {
   .structured-document [data-structured-action] {
-    display: block;
-    margin-inline-end: 0;
-    width: 100%;
+    inline-size: 44px;
+    block-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .structured-document [data-structured-action] {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .structured-document [data-structured-action] {
+    background: ButtonFace;
+    border-color: ButtonText;
+    color: ButtonText;
   }
 
+  .structured-document [data-structured-action]:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .structured-document [data-structured-tooltip] {
+    background: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+}
+
+@media (max-width: 44rem) {
   .structured-document [data-structured-label],
   .structured-document [data-structured-value] {
     flex-basis: 100%;

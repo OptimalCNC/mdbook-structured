@@ -1,8 +1,10 @@
+mod action;
 mod container;
 mod encode;
 
 use crate::{Node, NodeValue, StructuredDocument, StructuredFormat};
 
+use self::action::Action;
 use self::container::Container;
 use self::encode::{push_encoded_attribute, push_encoded_text};
 
@@ -47,8 +49,8 @@ pub fn render_structured_page(
     output.push_str("<section class=\"structured-document\"><h1>");
     push_encoded_text(&mut output, chapter_name);
     output.push_str("</h1>");
-    push_action(&mut output, "expand-all", "Expand all");
-    push_action(&mut output, "collapse-all", "Collapse all");
+    Action::ExpandAll.push_html(&mut output);
+    Action::CollapseAll.push_html(&mut output);
     push_node(&mut output, document.root(), NodePosition::Root, 1, options);
     push_original_source(&mut output, document);
     output.push_str("</section>");
@@ -84,14 +86,6 @@ impl ScalarKind {
             Self::Null => "null",
         }
     }
-}
-
-fn push_action(output: &mut String, action: &str, visible_text: &str) {
-    output.push_str("<button type=\"button\" data-structured-action=\"");
-    push_encoded_attribute(output, action);
-    output.push_str("\">");
-    push_encoded_text(output, visible_text);
-    output.push_str("</button>");
 }
 
 fn push_node(

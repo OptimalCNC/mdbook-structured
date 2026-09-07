@@ -166,6 +166,34 @@ fn failure_probe_rejects_malformed_dom_structure_and_empty_hooks() {
 }
 
 #[test]
+fn action_buttons_keep_accessible_names_with_decorative_icons_and_tooltip_labels() {
+    let document = parse_json(THRESHOLD_JSON, "actions.json");
+    let rendered = render_structured_page("Actions", &document, HtmlRenderOptions::default());
+    let html = rendered_browser_html(&rendered);
+    let buttons = html
+        .select(&Selector::parse(".structured-document > button").unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(buttons.len(), 2);
+    for (button, label) in buttons.into_iter().zip(["Expand all", "Collapse all"]) {
+        assert_eq!(button.value().attr("type"), Some("button"));
+        assert_eq!(button.value().attr("aria-label"), Some(label));
+        let icon = button
+            .select(&Selector::parse("svg").unwrap())
+            .next()
+            .unwrap();
+        assert_eq!(icon.value().attr("aria-hidden"), Some("true"));
+        assert_eq!(icon.value().attr("focusable"), Some("false"));
+        assert!(icon.text().collect::<String>().is_empty());
+        let tooltip = button
+            .select(&Selector::parse("[data-structured-tooltip]").unwrap())
+            .next()
+            .unwrap();
+        assert_eq!(tooltip.value().attr("aria-hidden"), Some("true"));
+        assert_eq!(tooltip.text().collect::<String>(), label);
+    }
+}
+
+#[test]
 fn positive_semantic_tree_preserves_types_order_disclosure_and_source() {
     let default_options = HtmlRenderOptions::default();
     assert_eq!(default_options.large_container_threshold(), 100);
